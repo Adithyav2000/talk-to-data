@@ -61,6 +61,14 @@ class DataService:
         def val(s):
             return s if isinstance(s, str) else getattr(s, "value", "")
 
+        # An explicit warehouse (e.g. the app's SQL-warehouse resource) beats discovery,
+        # which needs permission to list every warehouse.
+        explicit = os.environ.get("DATABRICKS_WAREHOUSE_ID", "").strip()
+        if explicit:
+            self.warehouse_id = explicit
+            logger.info("Using configured warehouse %s", explicit)
+            return
+
         try:
             whs = list(self.w.warehouses.list())
         except Exception as exc:
