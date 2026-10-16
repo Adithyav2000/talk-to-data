@@ -7,5 +7,3 @@ command:
 env:
   - name: GENIE_SPACE_ID
     value: "01f1c8b8bc9e187595404d6a66c18dc6"
-  - name: DATABRICKS_PAT
-    value: "dapi8d78f4d7bfd5cddfbacdf40f64694604-3"

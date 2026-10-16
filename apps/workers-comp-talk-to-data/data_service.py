@@ -11,6 +11,7 @@ IT review requests are stored in:
 
 import logging
 import os
+import time
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.sql import StatementState
 from sklearn.feature_extraction.text import TfidfVectorizer
@@ -20,12 +21,29 @@ import config
 logger = logging.getLogger(__name__)
 
 
+def _q(value) -> str:
+    """Escape a value for use inside a single-quoted SQL string literal."""
+    return str(value).replace("\\", "\\\\").replace("'", "''")
+
+
+def _check_state(state: str) -> str:
+    if state not in config.DATA_CALL_STATES or state == "All":
+        raise ValueError(f"Invalid state: {state!r}")
+    return state
+
+
 class DataService:
     """All SQL operations for compliance data-calls and IT-review workflow."""
 
     def __init__(self):
         pat = os.environ.get("DATABRICKS_PAT")
         if pat:
+            if not pat.startswith(("dapi", "dose", "eyJ")):
+                raise ValueError(
+                    "DATABRICKS_PAT is not a Databricks access token (expected it to "
+                    "start with 'dapi'). Generate one in Databricks: User Settings > "
+                    "Developer > Access tokens, then set it in .env and restart."
+                )
             self.w = WorkspaceClient(
                 host=os.environ.get("DATABRICKS_HOST"),
                 token=pat,
@@ -40,33 +58,50 @@ class DataService:
     # Warehouse auto-discovery
     # ------------------------------------------------------------------
     def _discover_warehouse(self):
+        def val(s):
+            return s if isinstance(s, str) else getattr(s, "value", "")
+
         try:
-            for wh in self.w.warehouses.list():
-                state = getattr(wh, "state", None)
-                val = state if isinstance(state, str) else getattr(state, "value", "")
-                if val == "RUNNING":
-                    self.warehouse_id = wh.id
-                    logger.info("Using warehouse %s (%s)", wh.name, wh.id)
-                    return
-            for wh in self.w.warehouses.list():
-                self.warehouse_id = wh.id
-                logger.info("Fallback warehouse %s (%s)", wh.name, wh.id)
-                return
+            whs = list(self.w.warehouses.list())
         except Exception as exc:
             logger.error("Warehouse discovery failed: %s", exc)
+            return
+        if not whs:
+            return
+
+        def rank(wh):
+            running = val(getattr(wh, "state", None)) == "RUNNING"
+            serverless = bool(getattr(wh, "enable_serverless_compute", False))
+            return (not running, not serverless)
+
+        best = min(whs, key=rank)
+        self.warehouse_id = best.id
+        logger.info("Using warehouse %s (%s, %s)", best.name, best.id, val(getattr(best, "state", None)))
 
     # ------------------------------------------------------------------
     # Generic SQL runner
     # ------------------------------------------------------------------
     def execute_sql(self, sql: str) -> dict:
         """Return {columns, rows} or {error}."""
+        if not self.warehouse_id:
+            self._discover_warehouse()
+        if not self.warehouse_id:
+            return {"error": "No SQL warehouse is available in this Databricks workspace."}
         try:
-            resp = self.w.statement_execution.execute_statement(
+            api = self.w.statement_execution
+            resp = api.execute_statement(
                 warehouse_id=self.warehouse_id,
                 statement=sql,
-                wait_timeout="50s",
+                wait_timeout="30s",
             )
-            if resp.status and resp.status.state == StatementState.SUCCEEDED:
+            deadline = time.monotonic() + 120
+            pending = (StatementState.PENDING, StatementState.RUNNING)
+            while resp.status and resp.status.state in pending and time.monotonic() < deadline:
+                time.sleep(2)
+                resp = api.get_statement(resp.statement_id)
+
+            state = resp.status.state if resp.status else None
+            if state == StatementState.SUCCEEDED:
                 cols = (
                     [c.name for c in resp.manifest.schema.columns]
                     if resp.manifest
@@ -78,8 +113,16 @@ class DataService:
                     else []
                 )
                 return {"columns": cols, "rows": rows}
-            err = resp.status.error if resp.status else "Unknown"
-            return {"error": str(err)}
+            if state in pending:
+                try:
+                    api.cancel_execution(resp.statement_id)
+                except Exception:
+                    pass
+                self.warehouse_id = None
+                return {"error": "The SQL warehouse is still starting up. Wait a minute and refresh."}
+            err = resp.status.error if resp.status else None
+            msg = getattr(err, "message", None) or str(err or f"Query did not succeed (state: {getattr(state, 'value', state)})")
+            return {"error": msg}
         except Exception as exc:
             return {"error": str(exc)}
 
@@ -87,22 +130,24 @@ class DataService:
     # Table bootstrap (only IT requests -- data-calls table already exists)
     # ------------------------------------------------------------------
     def ensure_tables_exist(self):
-        self.execute_sql(f"""
+        res = self.execute_sql(f"""
             CREATE TABLE IF NOT EXISTS {config.IT_REQUESTS_TABLE} (
                 id                    BIGINT GENERATED ALWAYS AS IDENTITY,
                 request_description   STRING NOT NULL,
                 matched_data_call     STRING,
                 similarity_score      DOUBLE,
                 is_new_request        BOOLEAN,
-                status                STRING DEFAULT 'pending',
+                status                STRING,
                 genie_sql             STRING,
                 reviewed_by           STRING,
                 review_notes          STRING,
                 requested_by          STRING,
-                requested_at          TIMESTAMP DEFAULT current_timestamp(),
+                requested_at          TIMESTAMP,
                 reviewed_at           TIMESTAMP
             )
         """)
+        if "error" in res:
+            logger.error("Could not create %s: %s", config.IT_REQUESTS_TABLE, res["error"])
 
     # ------------------------------------------------------------------
     # Data-call queries (reads existing registry table)
@@ -116,10 +161,9 @@ class DataService:
         tbl = table or config.DATA_CALLS_TABLE
         clauses = ["1=1"]
         if state and state != "All":
-            clauses.append(f"state = '{state}'")
+            clauses.append(f"state = '{_q(state)}'")
         if name_search:
-            safe = name_search.replace("'", "''")
-            clauses.append(f"LOWER(data_call_name) LIKE LOWER('%{safe}%')")
+            clauses.append(f"LOWER(data_call_name) LIKE LOWER('%{_q(name_search)}%')")
         where = " AND ".join(clauses)
         return self.execute_sql(
             f"SELECT data_call_id, data_call_name, file_name, description, state "
@@ -137,11 +181,14 @@ class DataService:
             logger.warning("Could not read SQL file %s: %s", asset_location, exc)
         return None
 
-    def get_it_requests(self, status_filter: str | None = None) -> dict:
-        clause = (
-            "" if not status_filter or status_filter == "All"
-            else f" AND status = '{status_filter}'"
-        )
+    def get_it_requests(
+        self, status_filter: str | None = None, requested_by: str | None = None
+    ) -> dict:
+        clause = ""
+        if status_filter and status_filter != "All":
+            clause += f" AND status = '{_q(status_filter)}'"
+        if requested_by:
+            clause += f" AND requested_by = '{_q(requested_by)}'"
         return self.execute_sql(
             f"SELECT * FROM {config.IT_REQUESTS_TABLE} WHERE 1=1{clause} "
             f"ORDER BY requested_at DESC"
@@ -151,14 +198,20 @@ class DataService:
     # Semantic matching against existing registry descriptions
     # ------------------------------------------------------------------
     def find_similar_data_call(self, description: str) -> tuple[str | None, float]:
-        result = self.execute_sql(
-            f"SELECT data_call_name, description FROM {config.DATA_CALLS_TABLE}"
-        )
-        if "error" in result or not result.get("rows"):
+        names: list[str] = []
+        descs: list[str] = []
+        for tbl in config.DATA_CALL_CATEGORIES.values():
+            result = self.execute_sql(
+                f"SELECT data_call_name, description FROM {tbl}"
+            )
+            if "error" in result:
+                logger.warning("Similarity lookup failed for %s: %s", tbl, result["error"])
+                continue
+            for r in result.get("rows", []):
+                names.append(r[0])
+                descs.append(r[1] or "")
+        if not names:
             return None, 0.0
-
-        names = [r[0] for r in result["rows"]]
-        descs = [r[1] or "" for r in result["rows"]]
 
         vectorizer = TfidfVectorizer(stop_words="english", ngram_range=(1, 2))
         matrix = vectorizer.fit_transform(descs + [description])
@@ -176,15 +229,17 @@ class DataService:
     def submit_request(self, description: str, requested_by: str) -> dict:
         matched, score = self.find_similar_data_call(description)
         is_new = matched is None
-        safe_desc = description.replace("'", "''")
-        matched_val = f"'{matched}'" if matched else "NULL"
-        self.execute_sql(f"""
+        safe_desc = _q(description)
+        matched_val = f"'{_q(matched)}'" if matched else "NULL"
+        res = self.execute_sql(f"""
             INSERT INTO {config.IT_REQUESTS_TABLE}
             (request_description, matched_data_call, similarity_score,
-             is_new_request, status, requested_by)
+             is_new_request, status, requested_by, requested_at)
             VALUES ('{safe_desc}', {matched_val}, {score}, {is_new},
-                    'pending', '{requested_by}')
+                    'pending', '{_q(requested_by)}', current_timestamp())
         """)
+        if "error" in res:
+            raise RuntimeError(res["error"])
         return {
             "is_new": is_new,
             "matched_name": matched,
@@ -194,34 +249,45 @@ class DataService:
     def approve_request(
         self, request_id: int, reviewer: str,
         sql_query: str, data_call_name: str, description: str, state: str,
+        table: str | None = None,
     ):
-        safe_sql = sql_query.replace("'", "''")
-        safe_name = data_call_name.replace("'", "''")
-        safe_desc = description.replace("'", "''")
-        self.execute_sql(f"""
-            UPDATE {config.IT_REQUESTS_TABLE}
-            SET status = 'approved', reviewed_by = '{reviewer}',
-                genie_sql = '{safe_sql}', reviewed_at = current_timestamp()
-            WHERE id = {request_id}
-        """)
+        table = table or config.DATA_CALLS_TABLE
+        if table not in config.DATA_CALL_CATEGORIES.values():
+            raise ValueError(f"Unknown registry table: {table!r}")
+        state = _check_state(state)
+        request_id = int(request_id)
+        safe_sql = _q(sql_query)
+        safe_name = _q(data_call_name)
+        safe_desc = _q(description)
         # Also insert into the registry so new call appears immediately
         next_id = self.execute_sql(
-            f"SELECT COALESCE(MAX(data_call_id), 0) + 1 FROM {config.DATA_CALLS_TABLE}"
+            f"SELECT COALESCE(MAX(data_call_id), 0) + 1 FROM {table}"
         )
         nid = int(next_id["rows"][0][0]) if next_id.get("rows") else 99
-        self.execute_sql(f"""
-            INSERT INTO {config.DATA_CALLS_TABLE}
+        res = self.execute_sql(f"""
+            INSERT INTO {table}
             (data_call_id, data_call_name, file_name, asset_location,
              description, state)
             VALUES ({nid}, '{safe_name}', 'approved_{request_id}.sql',
                     '', '{safe_desc}', '{state}')
         """)
-
-    def reject_request(self, request_id: int, reviewer: str, notes: str):
-        safe = notes.replace("'", "''")
-        self.execute_sql(f"""
+        if "error" in res:
+            raise RuntimeError(res["error"])
+        res = self.execute_sql(f"""
             UPDATE {config.IT_REQUESTS_TABLE}
-            SET status = 'rejected', reviewed_by = '{reviewer}',
-                review_notes = '{safe}', reviewed_at = current_timestamp()
+            SET status = 'approved', reviewed_by = '{_q(reviewer)}',
+                genie_sql = '{safe_sql}', reviewed_at = current_timestamp()
             WHERE id = {request_id}
         """)
+        if "error" in res:
+            raise RuntimeError(res["error"])
+
+    def reject_request(self, request_id: int, reviewer: str, notes: str):
+        res = self.execute_sql(f"""
+            UPDATE {config.IT_REQUESTS_TABLE}
+            SET status = 'rejected', reviewed_by = '{_q(reviewer)}',
+                review_notes = '{_q(notes)}', reviewed_at = current_timestamp()
+            WHERE id = {int(request_id)}
+        """)
+        if "error" in res:
+            raise RuntimeError(res["error"])

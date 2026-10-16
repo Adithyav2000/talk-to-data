@@ -1,4 +1,20 @@
 import os
+from pathlib import Path
+
+
+def _load_dotenv():
+    env_file = Path(__file__).parent / ".env"
+    if not env_file.is_file():
+        return
+    for line in env_file.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+
+
+_load_dotenv()
 
 # ---------------------------------------------------------------------------
 # Genie Configuration
@@ -24,13 +40,87 @@ DATA_CALL_CATEGORIES = {
 SIMILARITY_THRESHOLD = 0.65
 
 # ---------------------------------------------------------------------------
-# Role-based users (replace with SSO / Databricks OAuth in production)
+# Personas  (replace with SSO / Databricks OAuth in production)
+#
+# Each persona declares what it may open (`permissions`), what its home screen
+# emphasises (`kpis`, `quickActions`) and how it appears on the sign-in screen.
+# Permissions are enforced server-side in main.py.
 # ---------------------------------------------------------------------------
-USERS = {
-    "compliance_admin": {"password": "admin", "role": "admin", "name": "Compliance Admin"},
-    "compliance_analyst": {"password": "admin", "role": "analyst", "name": "Compliance Analyst"},
-    "it_reviewer": {"password": "admin", "role": "it_admin", "name": "IT Review Team"},
-    "leadership": {"password": "admin", "role": "executive", "name": "Executive Leadership"},
+DEMO_PASSWORD = os.getenv("DEMO_PASSWORD", "admin")
+APP_SECRET = os.getenv("APP_SECRET", "")  # empty -> random per process
+SESSION_HOURS = int(os.getenv("SESSION_HOURS", "8"))
+
+PERSONAS = {
+    "compliance_admin": {
+        "password": DEMO_PASSWORD,
+        "name": "Compliance Admin",
+        "role": "admin",
+        "title": "Head of Compliance",
+        "icon": "shield",
+        "accent": "#1f7a5c",
+        "tagline": "Oversight of the data-call registry and reports, with visibility into every request.",
+        "permissions": ["data_calls", "reports", "see_all_requests"],
+        "kpis": ["totalCalls", "passRate", "totalRequests", "pendingReviews"],
+        "quickActions": [
+            {"label": "Browse data calls", "desc": "Search and run registered calls", "page": "Data Calls"},
+            {"label": "Ask the data", "desc": "Chat with Genie for instant answers", "page": "Ask Data"},
+        ],
+    },
+    "compliance_analyst": {
+        "password": DEMO_PASSWORD,
+        "name": "Compliance Analyst",
+        "role": "analyst",
+        "title": "Regulatory Reporting Analyst",
+        "icon": "search",
+        "accent": "#3b82a6",
+        "tagline": "Find, run and request the data calls you need for regulatory filings.",
+        "permissions": ["data_calls", "reports"],
+        "kpis": ["totalCalls", "passRate", "myRequests", "myPending"],
+        "quickActions": [
+            {"label": "Run a data call", "desc": "Pick a call, set dates, get results", "page": "Data Calls"},
+            {"label": "Request a new call", "desc": "Describe what you need; we match it", "page": "Data Calls", "tab": "request"},
+            {"label": "Ask the data", "desc": "Explore with natural language", "page": "Ask Data"},
+        ],
+    },
+    "it_reviewer": {
+        "password": DEMO_PASSWORD,
+        "name": "IT Review Team",
+        "role": "it_admin",
+        "title": "Data Engineering Reviewer",
+        "icon": "code",
+        "accent": "#7c6fc7",
+        "tagline": "Turn approved requests into tested, registered data calls.",
+        "permissions": ["data_calls", "it_review", "see_all_requests"],
+        "kpis": ["pendingReviews", "approvedCount", "rejectedCount", "totalCalls"],
+        "quickActions": [
+            {"label": "Open the queue", "desc": "Pending requests waiting on you", "page": "IT Review"},
+            {"label": "Browse registry", "desc": "Check for existing coverage", "page": "Data Calls"},
+        ],
+    },
+    "leadership": {
+        "password": DEMO_PASSWORD,
+        "name": "Executive Leadership",
+        "role": "executive",
+        "title": "Chief Risk Officer",
+        "icon": "chart",
+        "accent": "#d99a2b",
+        "tagline": "Headline claims and cost analytics, one question away.",
+        "permissions": ["reports"],
+        "kpis": ["totalCalls", "passRate", "reportCategories"],
+        "quickActions": [
+            {"label": "Ask the data", "desc": "Plain-English questions, charts back", "page": "Ask Data"},
+            {"label": "Claims overview", "desc": "Counts, trends and denial rates", "page": "Ask Data", "category": "Claims Overview"},
+            {"label": "Financial analysis", "desc": "Cost, reserves and liability", "page": "Ask Data", "category": "Financial Analysis"},
+        ],
+    },
+}
+
+# Navigation pages and the permission each one needs
+PAGE_PERMISSIONS = {
+    "Home": None,
+    "Data Calls": "data_calls",
+    "Ask Data": "reports",
+    "IT Review": "it_review",
 }
 
 # ---------------------------------------------------------------------------
