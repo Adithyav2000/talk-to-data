@@ -24,6 +24,7 @@ from pydantic import BaseModel
 
 import config
 import report_cache
+import sql_assets
 from data_service import DataService
 from genie_client import GenieClient
 
@@ -88,10 +89,10 @@ class LoginRequest(BaseModel):
 
 
 class ExecuteDataCallRequest(BaseModel):
-    description: str
-    fromDate: str = ""
-    toDate: str = ""
-    conversationId: str | None = None
+    category: str | None = None
+    dataCallId: int
+    fromDate: str
+    toDate: str
     refresh: bool = False
 
 
@@ -443,9 +444,50 @@ def get_data_calls(category: str | None = None, state: str = "All", search: str 
 
 @app.post("/api/data-calls/execute")
 def execute_data_call(req: ExecuteDataCallRequest, user: dict = Depends(needs("data_calls"))):
-    # Dates only frame the first question; replies in a conversation are sent as typed.
-    prompt = req.description if req.conversationId else f"{req.description} (from {req.fromDate} to {req.toDate})"
-    return _cached_ask(prompt, req.conversationId, req.refresh)
+    """Run a registered data call: load its SQL asset, apply the period, run it on the warehouse."""
+    category = _registry(user, req.category)
+    table = config.DATA_CALL_CATEGORIES[category]
+    try:
+        start, end = sql_assets.parse_period(req.fromDate, req.toDate)
+    except sql_assets.SqlAssetError as exc:
+        return JSONResponse(status_code=400, content={"error": str(exc)})
+
+    key = report_cache.make_key("call", category, str(req.dataCallId), start, end)
+    if not req.refresh and (hit := report_cache.get(key)):
+        return hit
+
+    svc = get_data_svc()
+    try:
+        asset = svc.get_data_call_asset(table, req.dataCallId)
+    except RuntimeError as exc:
+        return JSONResponse(status_code=502, content={"error": str(exc)})
+    if not asset:
+        return JSONResponse(status_code=404, content={"error": "That data call is not in the registry."})
+
+    sql = svc.get_data_call_sql(asset["asset_location"])
+    source = asset["asset_location"] or asset["file_name"]
+    if not sql:
+        sql = svc.get_approved_sql(asset["file_name"])  # calls registered through IT review
+        source = f"approved request ({asset['file_name']})"
+    if not sql:
+        return JSONResponse(status_code=404, content={
+            "error": f"No SQL file could be loaded for “{asset['name']}”"
+                     + (f" from {asset['asset_location']}." if asset["asset_location"] else " (the registry has no asset location).")
+        })
+
+    try:
+        final_sql, mode, replaced = sql_assets.apply_period(sql, start, end)
+    except sql_assets.SqlAssetError as exc:
+        return JSONResponse(status_code=400, content={"error": str(exc)})
+
+    res = svc.execute_sql(final_sql)
+    if "error" in res:
+        return JSONResponse(status_code=502, content={"error": res["error"], "sql": final_sql})
+    out = {**res, "sql": final_sql, "dateMode": mode, "replaced": replaced,
+           "source": source, "period": [start, end]}
+    if report_cache.cacheable(out):
+        report_cache.put(key, out)
+    return out
 
 
 @app.post("/api/data-calls/request")

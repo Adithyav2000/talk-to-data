@@ -546,14 +546,24 @@ function HomePage({ go }) {
 // ============================================================
 const STATE_FILTERS = [['All', 'All'], ['TESTED_PASS', 'Passing'], ['TESTED_FAIL', 'Failing'], ['NA', 'Untested']];
 
-function RunPanel({ call, onClose }) {
+function DateNote({ res }) {
+  if (!res || res.error || !res.dateMode) return null;
+  const [from, to] = res.period || [];
+  const range = from && to ? `${fmtDate(from)} – ${fmtDate(to)}` : 'your range';
+  if (res.dateMode === 'placeholders') return html`<${Alert} kind="ok">Ran for <b>${range}</b>. Date placeholders in the SQL file were filled in (${plural(res.replaced, 'place')}).<//>`;
+  if (res.dateMode === 'literals') return html`<${Alert} kind="info">This SQL file hard-codes its dates, so ${plural(res.replaced, 'date literal')} were replaced with <b>${range}</b> (earliest → from, latest → to). Check the SQL tab.<//>`;
+  return html`<${Alert} kind="warn"><b>Your date range was not applied.</b> This SQL file has no date placeholder (like <code>:from_date</code> / <code>:to_date</code>), so it ran exactly as written.<//>`;
+}
+
+function RunPanel({ call, category, onClose }) {
   const [from, setFrom] = useState('2020-01-01');
   const [to, setTo] = useState(new Date().toISOString().split('T')[0]);
-  const g = useGenie('/api/data-calls/execute');
-  const started = g.msgs.length > 0 || g.busy;
-  const run = (refresh = false) => {
-    g.reset();
-    g.send(`Run “${call.data_call_name}” from ${from} to ${to}`, { description: call.description || call.data_call_name, fromDate: from, toDate: to, refresh }, true);
+  const [res, setRes] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const run = async (refresh = false) => {
+    setBusy(true); setRes(null);
+    setRes(await post('/api/data-calls/execute', { category, dataCallId: Number(call.data_call_id), fromDate: from, toDate: to, refresh }));
+    setBusy(false);
   };
   return html`<${Drawer} title=${call.data_call_name} subtitle=${call.description} onClose=${onClose}>
     <div className="card pad" style=${{ display: 'grid', gap: 14 }}>
@@ -561,9 +571,14 @@ function RunPanel({ call, onClose }) {
         <div className="field"><label>From</label><input className="input" type="date" value=${from} max=${to} onChange=${e => setFrom(e.target.value)} /></div>
         <div className="field"><label>To</label><input className="input" type="date" value=${to} min=${from} onChange=${e => setTo(e.target.value)} /></div>
       </div>
-      <button className="btn primary" onClick=${() => run(started)} disabled=${g.busy}>${g.busy ? html`<${Spinner} />Running via Genie…` : html`<${Icon} name="play" size=${14} />${started ? 'Run again' : 'Run data call'}`}</button>
+      <button className="btn primary" onClick=${() => run(!!res)} disabled=${busy}>${busy ? html`<${Spinner} />Running on SQL warehouse…` : html`<${Icon} name="play" size=${14} />${res ? 'Run again' : 'Run data call'}`}</button>
     </div>
-    <${GenieThread} g=${g} name=${call.data_call_name} onRefresh=${() => run(true)} onReply=${t => g.send(t, { description: t, fromDate: from, toDate: to })} />
+    ${busy && html`<div className="skeleton" style=${{ height: 220 }} />`}
+    ${res && html`<div style=${{ display: 'grid', gap: 12 }}>
+      <${DateNote} res=${res} />
+      <div className="card pad"><${ResultView} res=${res} name=${call.data_call_name} onRefresh=${() => run(true)} />
+        ${res.source && html`<p className="hint" style=${{ marginTop: 12 }}>Source: <span className="mono">${res.source}</span></p>`}</div>
+    </div>`}
   <//>`;
 }
 
@@ -651,7 +666,7 @@ function DataCallsPage({ opts = {} }) {
           <${StatusBadge} status=${r.status} /></div>`)}</div>`}
     </div>`}
 
-    ${run && html`<${RunPanel} call=${run} onClose=${() => setRun(null)} />`}
+    ${run && html`<${RunPanel} call=${run} category=${cat} onClose=${() => setRun(null)} />`}
     ${asking && html`<${RequestModal} onClose=${() => setAsking(false)} cats=${cats} initialCat=${cat} />`}
   </div>`;
 }

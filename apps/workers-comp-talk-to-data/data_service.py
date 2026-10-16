@@ -184,15 +184,47 @@ class DataService:
         )
 
     def get_data_call_sql(self, asset_location: str) -> str | None:
-        """Read the SQL content from a workspace file path."""
+        """Read the SQL content of a registry asset (workspace file or UC volume file)."""
+        path = (asset_location or "").strip()
+        if not path:
+            return None
         try:
+            if path.startswith("/Volumes/"):
+                return self.w.files.download(path).contents.read().decode("utf-8")
             import base64
-            resp = self.w.workspace.export(path=asset_location, format="AUTO")
+            resp = self.w.workspace.export(path=path, format="AUTO")
             if resp.content:
                 return base64.b64decode(resp.content).decode("utf-8")
         except Exception as exc:
-            logger.warning("Could not read SQL file %s: %s", asset_location, exc)
+            logger.warning("Could not read SQL file %s: %s", path, exc)
         return None
+
+    def get_data_call_asset(self, table: str, data_call_id: int) -> dict | None:
+        """Registry row (name, file, asset location) for one data call."""
+        if table not in config.DATA_CALL_CATEGORIES.values():
+            raise ValueError(f"Unknown registry table: {table!r}")
+        res = self.execute_sql(
+            f"SELECT data_call_name, file_name, asset_location FROM {table} "
+            f"WHERE data_call_id = {int(data_call_id)}"
+        )
+        if "error" in res:
+            raise RuntimeError(res["error"])
+        if not res.get("rows"):
+            return None
+        name, file_name, location = res["rows"][0]
+        return {"name": name, "file_name": file_name, "asset_location": location}
+
+    def get_approved_sql(self, file_name: str) -> str | None:
+        """SQL stored with an IT-approved request (registry file name `approved_<id>.sql`)."""
+        import re
+        m = re.fullmatch(r"approved_(\d+)\.sql", file_name or "")
+        if not m:
+            return None
+        res = self.execute_sql(
+            f"SELECT genie_sql FROM {config.IT_REQUESTS_TABLE} WHERE id = {int(m.group(1))}"
+        )
+        rows = res.get("rows") or []
+        return rows[0][0] if rows and rows[0][0] else None
 
     def get_it_requests(
         self, status_filter: str | None = None, requested_by: str | None = None
