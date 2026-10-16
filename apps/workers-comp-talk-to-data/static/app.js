@@ -342,6 +342,45 @@ function ResultView({ res, name = 'result' }) {
   </div>`;
 }
 
+// ---- Genie conversation (lets the user answer Genie's clarifying questions) ----
+function useGenie(endpoint, onResult) {
+  const [msgs, setMsgs] = useState([]);
+  const [convId, setConvId] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const send = async (label, body) => {
+    setMsgs(m => [...m, { role: 'user', text: label }]); setBusy(true);
+    const res = await post(endpoint, { ...body, conversationId: convId });
+    if (res.conversation_id) setConvId(res.conversation_id);
+    setMsgs(m => [...m, { role: 'bot', res, q: label }]); setBusy(false);
+    if (onResult) onResult(res);
+    return res;
+  };
+  const reset = () => { setMsgs([]); setConvId(null); };
+  return { msgs, busy, send, reset };
+}
+
+function GenieThread({ g, name, onReply, placeholder = 'Reply to Genie…' }) {
+  const [text, setText] = useState('');
+  if (!g.msgs.length && !g.busy) return null;
+  const last = g.msgs[g.msgs.length - 1];
+  const asking = last?.role === 'bot' && !last.res.error && last.res.text && !last.res.columns?.length;
+  const submit = e => { e.preventDefault(); const t = text.trim(); if (!t || g.busy) return; setText(''); onReply(t); };
+  return html`<div className="thread">
+    ${g.msgs.map((m, i) => m.role === 'user'
+      ? html`<div key=${i} className="msg-user sm">${m.text}</div>`
+      : html`<div key=${i} className="msg-bot"><div className="bot-av"><${Icon} name="spark" size=${17} /></div>
+          <div className="card bubble"><${ResultView} res=${m.res} name=${name} /></div></div>`)}
+    ${g.busy && html`<div className="msg-bot"><div className="bot-av"><${Icon} name="spark" size=${17} /></div>
+      <div className="card bubble"><span className="typing"><i></i><i></i><i></i></span><span className="hint" style=${{ marginLeft: 8 }}>Genie is working…</span></div></div>`}
+    ${asking && !g.busy && html`<${Alert} kind="info">Genie needs a bit more detail. Answer below and it will carry on.<//>`}
+    <form className="composer" onSubmit=${submit}>
+      <input value=${text} onChange=${e => setText(e.target.value)} placeholder=${placeholder} disabled=${g.busy} />
+      <button className="send" type="submit" disabled=${g.busy || !text.trim()} aria-label="Send"><${Icon} name="send" size=${18} /></button>
+    </form>
+    <div><button className="btn ghost sm" onClick=${g.reset}><${Icon} name="refresh" size=${14} />Start over</button></div>
+  </div>`;
+}
+
 // ============================================================
 // Login  --  persona picker
 // ============================================================
@@ -499,12 +538,11 @@ const STATE_FILTERS = [['All', 'All'], ['TESTED_PASS', 'Passing'], ['TESTED_FAIL
 function RunPanel({ call, onClose }) {
   const [from, setFrom] = useState('2020-01-01');
   const [to, setTo] = useState(new Date().toISOString().split('T')[0]);
-  const [res, setRes] = useState(null);
-  const [busy, setBusy] = useState(false);
-  const run = async () => {
-    setBusy(true); setRes(null);
-    setRes(await post('/api/data-calls/execute', { description: call.description || call.data_call_name, fromDate: from, toDate: to }));
-    setBusy(false);
+  const g = useGenie('/api/data-calls/execute');
+  const started = g.msgs.length > 0 || g.busy;
+  const run = () => {
+    g.reset();
+    g.send(`Run “${call.data_call_name}” from ${from} to ${to}`, { description: call.description || call.data_call_name, fromDate: from, toDate: to });
   };
   return html`<${Drawer} title=${call.data_call_name} subtitle=${call.description} onClose=${onClose}>
     <div className="card pad" style=${{ display: 'grid', gap: 14 }}>
@@ -512,10 +550,9 @@ function RunPanel({ call, onClose }) {
         <div className="field"><label>From</label><input className="input" type="date" value=${from} max=${to} onChange=${e => setFrom(e.target.value)} /></div>
         <div className="field"><label>To</label><input className="input" type="date" value=${to} min=${from} onChange=${e => setTo(e.target.value)} /></div>
       </div>
-      <button className="btn primary" onClick=${run} disabled=${busy}>${busy ? html`<${Spinner} />Running via Genie…` : html`<${Icon} name="play" size=${14} />Run data call`}</button>
+      <button className="btn primary" onClick=${run} disabled=${g.busy}>${g.busy ? html`<${Spinner} />Running via Genie…` : html`<${Icon} name="play" size=${14} />${started ? 'Run again' : 'Run data call'}`}</button>
     </div>
-    ${busy && html`<div className="skeleton" style=${{ height: 220 }} />`}
-    ${res && html`<div className="card pad"><${ResultView} res=${res} name=${call.data_call_name} /></div>`}
+    <${GenieThread} g=${g} name=${call.data_call_name} onReply=${t => g.send(t, { description: t, fromDate: from, toDate: to })} />
   <//>`;
 }
 
@@ -668,18 +705,15 @@ function AskDataPage({ opts = {} }) {
 function ReviewPanel({ req, onDone }) {
   const toast = useToast();
   const pending = String(req.status).toLowerCase() === 'pending';
-  const [gen, setGen] = useState(null);
   const [busy, setBusy] = useState('');
   const [name, setName] = useState('');
   const [cat, setCat] = useState('Compliance');
   const [state, setState] = useState('TESTED_PASS');
   const [sql, setSql] = useState('');
   const [notes, setNotes] = useState('');
+  const g = useGenie('/api/it-review/generate-sql', r => { if (r.sql) setSql(r.sql); });
 
-  const generate = async () => {
-    setBusy('gen'); const r = await post('/api/it-review/generate-sql', { description: req.request_description });
-    setGen(r); if (r.sql) setSql(r.sql); setBusy('');
-  };
+  const generate = () => { g.reset(); g.send('Draft the SQL for this request', { description: req.request_description }); };
   const approve = async e => {
     e.preventDefault(); setBusy('approve');
     const r = await post('/api/it-review/approve', { requestId: Number(req.id), sqlQuery: sql, dataCallName: name.trim(), description: req.request_description, state, category: cat });
@@ -709,8 +743,8 @@ function ReviewPanel({ req, onDone }) {
     ${!pending && req.genie_sql && html`<div className="card pad"><div className="card-title">Approved SQL</div><pre className="sql">${req.genie_sql}</pre></div>`}
 
     ${pending && html`<div className="review"><div className="card pad" style=${{ display: 'grid', gap: 14 }}>
-      <div className="card-title" style=${{ margin: 0 }}>Draft the query<button className="btn sm" onClick=${generate} disabled=${busy === 'gen'}>${busy === 'gen' ? html`<${Spinner} size=${14} />Asking Genie…` : html`<${Icon} name="spark" size=${14} />Generate with Genie`}</button></div>
-      ${gen && html`<${ResultView} res=${gen} name=${`request_${req.id}`} />`}
+      <div className="card-title" style=${{ margin: 0 }}>Draft the query<button className="btn sm" onClick=${generate} disabled=${g.busy}>${g.busy ? html`<${Spinner} size=${14} />Asking Genie…` : html`<${Icon} name="spark" size=${14} />${g.msgs.length ? 'Regenerate' : 'Generate with Genie'}`}</button></div>
+      <${GenieThread} g=${g} name=${`request_${req.id}`} onReply=${t => g.send(t, { description: t })} placeholder="Answer Genie, or refine the query (e.g. group by quarter of accident date)…" />
     </div>
 
     <div className="decision">

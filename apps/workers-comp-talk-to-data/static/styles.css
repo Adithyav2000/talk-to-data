@@ -436,3 +436,12 @@ table.t tbody tr:hover td { background: var(--surface-2); }
 .check input { margin-top: 3px; accent-color: var(--accent); width: 16px; height: 16px; }
 .check b { display: block; font-size: 13px; }
 .check small { color: var(--muted); font-size: 12px; }
+
+/* ---- Genie thread inside panels ---- */
+.thread { display: grid; gap: 14px; }
+.msg-user.sm { max-width: 90%; font-size: 13px; padding: 8px 13px; }
+.thread .composer { padding: 6px 6px 6px 14px; }
+.thread .composer input { flex: 1; border: 0; outline: none; background: transparent; padding: 8px 0; min-width: 0; }
+.thread .msg-bot { grid-template-columns: 30px 1fr; gap: 10px; }
+.thread .bot-av { width: 30px; height: 30px; border-radius: 9px; }
+.thread .bubble { padding: 14px; }

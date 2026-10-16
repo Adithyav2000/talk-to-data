@@ -89,6 +89,7 @@ class ExecuteDataCallRequest(BaseModel):
     description: str
     fromDate: str = ""
     toDate: str = ""
+    conversationId: str | None = None
 
 
 class SubmitRequest(BaseModel):
@@ -102,6 +103,7 @@ class ReportRequest(BaseModel):
 
 class GenerateSqlRequest(BaseModel):
     description: str
+    conversationId: str | None = None
 
 
 class ApproveRequest(BaseModel):
@@ -344,8 +346,9 @@ def get_data_calls(category: str = "Compliance", state: str = "All", search: str
 
 @app.post("/api/data-calls/execute")
 def execute_data_call(req: ExecuteDataCallRequest, user: dict = Depends(needs("data_calls"))):
-    prompt = f"{req.description} (from {req.fromDate} to {req.toDate})"
-    return _ensure_data(get_genie().ask(prompt))
+    # Dates only frame the first question; replies in a conversation are sent as typed.
+    prompt = req.description if req.conversationId else f"{req.description} (from {req.fromDate} to {req.toDate})"
+    return _ensure_data(get_genie().ask(prompt, conversation_id=req.conversationId))
 
 
 @app.post("/api/data-calls/request")
@@ -474,7 +477,7 @@ def get_it_requests(status: str = "All", user: dict = Depends(needs("it_review")
 
 @app.post("/api/it-review/generate-sql")
 def generate_sql(req: GenerateSqlRequest, user: dict = Depends(needs("it_review"))):
-    return _ensure_data(get_genie().ask(req.description))
+    return _ensure_data(get_genie().ask(req.description, conversation_id=req.conversationId))
 
 
 @app.post("/api/it-review/approve")
