@@ -5,11 +5,13 @@ command:
   - --port=8000
 
 env:
+  - name: DATABRICKS_PAT
+    valueFrom: "my-app-scope.databricks-pat"
+  - name: DATABRICKS_HOST
+    value: "https://adb-7405617190946816.16.azuredatabricks.net"
   - name: GENIE_SPACE_ID
     value: "01f1c8b8bc9e187595404d6a66c18dc6"
-  # SQL warehouse the app runs queries on (the service principal needs CAN USE on it)
-  - name: DATABRICKS_WAREHOUSE_ID
-    value: "8b3b789f3948f8a9"
+
 
   # Optional settings (defaults in config.py):
   # - name: REPORT_CACHE_TTL_HOURS
