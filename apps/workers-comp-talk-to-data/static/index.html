@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Workers' Comp - Talk to Data</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📊</text></svg>" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body, #root { height: 100%; width: 100%; }
+    body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; background: #f7f8f4; color: #2d3a2e; }
+    #loading { display: flex; align-items: center; justify-content: center; height: 100vh; flex-direction: column; gap: 16px; }
+    #loading .spinner { width: 40px; height: 40px; border: 4px solid #d0e3cc; border-top-color: #5f7161; border-radius: 50%; animation: spin 0.8s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+  <script type="importmap">
+  {
+    "imports": {
+      "react": "https://esm.sh/react@18.3.1",
+      "react/": "https://esm.sh/react@18.3.1/",
+      "react-dom/client": "https://esm.sh/react-dom@18.3.1/client?deps=react@18.3.1",
+      "@mui/material": "https://esm.sh/@mui/material@5.16.7?deps=react@18.3.1,react-dom@18.3.1",
+      "@mui/material/": "https://esm.sh/@mui/material@5.16.7&deps=react@18.3.1,react-dom@18.3.1/",
+      "@mui/icons-material/": "https://esm.sh/@mui/icons-material@5.16.7?deps=react@18.3.1,react-dom@18.3.1,@mui/material@5.16.7/",
+      "@emotion/react": "https://esm.sh/@emotion/react@11.13.0?deps=react@18.3.1",
+      "@emotion/styled": "https://esm.sh/@emotion/styled@11.13.0?deps=react@18.3.1,@emotion/react@11.13.0",
+      "htm": "https://esm.sh/htm@3.1.1",
+      "recharts": "https://esm.sh/recharts@2.12.7?deps=react@18.3.1,react-dom@18.3.1"
+    }
+  }
+  </script>
+</head>
+<body>
+  <div id="root">
+    <div id="loading">
+      <div class="spinner"></div>
+      <span style="color: #5f7161; font-weight: 500;">Loading Workers' Comp Platform...</span>
+    </div>
+  </div>
+  <script type="module" src="/static/app.js"></script>
+</body>
+</html>
