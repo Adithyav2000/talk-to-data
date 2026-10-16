@@ -109,8 +109,8 @@ PERSONAS = {
         "kpis": ["totalCalls", "passRate", "reportCategories"],
         "quickActions": [
             {"label": "Ask the data", "desc": "Plain-English questions, charts back", "page": "Ask Data"},
-            {"label": "Claims overview", "desc": "Counts, trends and denial rates", "page": "Ask Data", "category": "Claims Overview"},
-            {"label": "Financial analysis", "desc": "Cost, reserves and liability", "page": "Ask Data", "category": "Financial Analysis"},
+            {"label": "Enterprise reports", "desc": "Injury, demographic and carrier operations", "page": "Ask Data", "category": "Enterprise / Operational Reports"},
+            {"label": "Finance reports", "desc": "Cost, reserves and exposure", "page": "Ask Data", "category": "Finance Reports"},
         ],
     },
 }
@@ -132,28 +132,28 @@ DATA_CALL_STATES = ["All", "TESTED_PASS", "TESTED_FAIL", "NA"]
 # Enterprise Report prompts  (10 per category)
 # ---------------------------------------------------------------------------
 REPORT_PROMPTS = {
-    "Claims Overview": [
-        "Show total workers compensation claims count by state for the current year",
-        "What is the average claim amount by injury type?",
-        "Show monthly trend of new claims filed this year",
-        "Which states have the highest claim denial rates?",
-        "Show top 10 employers by workers comp claim frequency",
-        "What is the distribution of claims by worker age group?",
-        "Show claim resolution time statistics by state",
-        "Compare open vs closed claims across all states",
-        "What are the most common injury types reported?",
-        "Show quarterly claims volume trend for the last 2 years",
+    "Finance Reports": [
+        "Claims Cost Summary: show total and average weekly wages by claim status and year",
+        "Carrier Liability Exposure: show the open claims count and total wage exposure per carrier",
+        "Claims Aging & Reserve Report: show the duration from claim assembly to closure for financial reserve tracking",
+        "High-Cost Claims Flagging: flag the top percentile of claims by average weekly wage multiplied by number of dependents",
+        "Year-over-Year Cost Trend: show annual claim volume and total wage liability over time",
+        "Dependent Liability Analysis: show financial exposure segmented by dependent count brackets",
+        "Carrier Type Cost Comparison: show average claim cost and claim volume for each carrier type",
+        "District-Level Financial Summary: show total wage exposure and claim counts per district",
+        "Claim Settlement Velocity: show the average days between key milestones (PPD scheduled, closed) alongside wage cost",
+        "Open Claims Financial Risk: rank all currently open claims by weekly wage and age at injury risk",
     ],
-    "Financial Analysis": [
-        "What is the total paid amount across all states this year?",
-        "Show average cost per workers compensation claim by state",
-        "What are the top 10 most expensive claim types?",
-        "Show monthly payment disbursement trends",
-        "Compare medical vs indemnity costs by state",
-        "What is the reserve adequacy ratio by claim type?",
-        "Show outstanding liability by state",
-        "What percentage of claims exceed $100,000 in total cost?",
-        "Show cost development patterns over claim maturity periods",
-        "Compare actual vs expected costs by injury category",
+    "Enterprise / Operational Reports": [
+        "Injury Classification Distribution: show claim counts by OIICS/WCIO codes and body part",
+        "Demographic Risk Profile: show injury frequency by gender, age group and district",
+        "Carrier Performance Scorecard: show average resolution time and open/closed ratio per carrier",
+        "District Claims Heatmap: show the geographic distribution of claims, injury types and severity by district",
+        "Claims Pipeline & Backlog: show the funnel across milestones - assembled, PPD scheduled, closed",
+        "Seasonal Accident Trend: show monthly and quarterly accident patterns across years",
+        "Age-at-Injury Analysis: show injury type and severity distribution across age bands",
+        "Cause-of-Injury Pareto Report: show the top 20% of injury causes driving 80% of claims",
+        "Claim Reopening Analysis: show claims with multiple milestone resets that indicate reopened cases",
+        "Carrier Market Share Report: show the proportion of total claims handled by each carrier over time",
     ],
 }
