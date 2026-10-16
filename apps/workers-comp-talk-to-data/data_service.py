@@ -215,6 +215,88 @@ class DataService:
         name, file_name, location = res["rows"][0]
         return {"name": name, "file_name": file_name, "asset_location": location}
 
+    # ------------------------------------------------------------------
+    # Registry sync: persist SQL of IT-approved calls as files next to the others
+    # ------------------------------------------------------------------
+    def list_unsynced(self) -> list[dict]:
+        """Registry rows with no SQL asset file (created by approving a request)."""
+        items: list[dict] = []
+        for category, table in config.DATA_CALL_CATEGORIES.items():
+            res = self.execute_sql(
+                f"SELECT data_call_id, data_call_name, file_name, description FROM {table} "
+                f"WHERE asset_location IS NULL OR TRIM(asset_location) = '' ORDER BY data_call_id"
+            )
+            if "error" in res:
+                raise RuntimeError(f"{category} registry: {res['error']}")
+            for cid, name, file_name, description in res["rows"]:
+                items.append({
+                    "category": category, "dataCallId": int(cid), "name": name,
+                    "fileName": file_name, "description": description,
+                    "hasSql": bool(self.get_approved_sql(file_name)),
+                })
+        return items
+
+    def _asset_folder_and_next_number(self, table: str, category: str) -> tuple[str, int]:
+        import posixpath, re
+        from collections import Counter
+        res = self.execute_sql(
+            f"SELECT file_name, asset_location FROM {table} "
+            f"WHERE asset_location IS NOT NULL AND TRIM(asset_location) <> ''"
+        )
+        if "error" in res:
+            raise RuntimeError(res["error"])
+        folders = Counter(posixpath.dirname(loc) for _, loc in res["rows"] if loc)
+        numbers = [int(m.group(1)) for fn, _ in res["rows"] if (m := re.match(r"(\d+)_", fn or ""))]
+        if folders:
+            folder = folders.most_common(1)[0][0]
+        elif config.SQL_ASSET_ROOT:
+            folder = f"{config.SQL_ASSET_ROOT.rstrip('/')}/{category.lower().replace(' ', '_')}"
+        else:
+            raise RuntimeError(
+                f"No existing SQL files in the {category} registry to copy the location from. "
+                "Set SQL_ASSET_ROOT to a workspace folder."
+            )
+        return folder, (max(numbers) + 1 if numbers else 1)
+
+    def sync_to_registry(self, items: list[dict], synced_by: str) -> list[dict]:
+        """Write each item's SQL to a workspace file and point its registry row at it."""
+        import io, re
+        from databricks.sdk.service.workspace import ImportFormat
+
+        plan: dict[str, tuple[str, int]] = {}
+        results = []
+        for it in items:
+            category = it["category"]
+            try:
+                table = config.DATA_CALL_CATEGORIES[category]
+                sql = self.get_approved_sql(it["fileName"])
+                if not sql:
+                    raise RuntimeError("No approved SQL was found for this data call.")
+                if category not in plan:
+                    plan[category] = self._asset_folder_and_next_number(table, category)
+                folder, number = plan[category]
+                slug = re.sub(r"[^a-z0-9]+", "_", str(it["name"]).lower()).strip("_")[:60] or "data_call"
+                file_name = f"{number:02d}_{slug}.sql"
+                path = f"{folder}/{file_name}"
+                header = (
+                    f"-- Data call: {it['name']}\n"
+                    f"-- Registered by Claimsight from {it['fileName']} (synced by {synced_by})\n\n"
+                )
+                body = sql.strip().rstrip(";") + ";\n"
+                self.w.workspace.upload(path, io.BytesIO((header + body).encode("utf-8")),
+                                        format=ImportFormat.AUTO, overwrite=False)
+                res = self.execute_sql(
+                    f"UPDATE {table} SET file_name = '{_q(file_name)}', asset_location = '{_q(path)}' "
+                    f"WHERE data_call_id = {int(it['dataCallId'])}"
+                )
+                if "error" in res:
+                    raise RuntimeError(f"File written to {path}, but the registry update failed: {res['error']}")
+                plan[category] = (folder, number + 1)
+                results.append({**it, "ok": True, "fileName": file_name, "assetLocation": path})
+            except Exception as exc:
+                results.append({**it, "ok": False, "error": str(exc)})
+        return results
+
     def get_approved_sql(self, file_name: str) -> str | None:
         """SQL stored with an IT-approved request (registry file name `approved_<id>.sql`)."""
         import re

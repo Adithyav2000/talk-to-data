@@ -150,6 +150,15 @@ class ExportRequest(BaseModel):
     includeSql: bool = False
 
 
+class SyncItem(BaseModel):
+    category: str
+    dataCallId: int
+
+
+class SyncRequest(BaseModel):
+    items: list[SyncItem] | None = None  # None = everything that is out of sync
+
+
 class RejectRequest(BaseModel):
     requestId: int
     notes: str = ""
@@ -709,6 +718,31 @@ def approve_request(req: ApproveRequest, user: dict = Depends(needs("it_review")
         return {"success": True}
     except Exception as exc:
         return {"success": False, "error": str(exc)}
+
+
+@app.get("/api/it-review/unsynced")
+def unsynced_calls(user: dict = Depends(needs("it_review"))):
+    try:
+        return {"items": get_data_svc().list_unsynced()}
+    except RuntimeError as exc:
+        return JSONResponse(status_code=502, content={"error": str(exc)})
+
+
+@app.post("/api/it-review/sync")
+def sync_registry(req: SyncRequest, user: dict = Depends(needs("it_review"))):
+    """Write SQL files for approved data calls that have none and link them in the registry."""
+    svc = get_data_svc()
+    try:
+        pending = svc.list_unsynced()
+    except RuntimeError as exc:
+        return JSONResponse(status_code=502, content={"error": str(exc)})
+    if req.items is not None:
+        wanted = {(i.category, i.dataCallId) for i in req.items}
+        pending = [p for p in pending if (p["category"], p["dataCallId"]) in wanted]
+    results = svc.sync_to_registry(pending, user["username"])
+    if any(r["ok"] for r in results):
+        report_cache.clear()  # a synced call now runs from its file
+    return {"results": results, "synced": sum(1 for r in results if r["ok"]), "failed": sum(1 for r in results if not r["ok"])}
 
 
 @app.post("/api/it-review/reject")

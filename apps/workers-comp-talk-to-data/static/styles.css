@@ -457,3 +457,6 @@ table.t tbody tr:hover td { background: var(--surface-2); }
 .cache-note .btn { color: var(--blue); }
 
 .grid-2 > *, .split > * { min-width: 0; }
+
+/* ---- registry sync ---- */
+.sync-card { margin-bottom: 18px; border-color: var(--amber); }

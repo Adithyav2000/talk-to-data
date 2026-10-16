@@ -876,6 +876,39 @@ function ReviewPanel({ req, onDone }) {
   </div>`;
 }
 
+function SyncCard() {
+  const toast = useToast();
+  const [items, setItems] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState([]);
+  const load = useCallback(() => api('/api/it-review/unsynced').then(d => setItems(d.error ? { error: d.error } : d.items)), []);
+  useEffect(() => { load(); }, [load]);
+
+  const sync = async () => {
+    setBusy(true); setFailed([]);
+    const r = await post('/api/it-review/sync', {});
+    setBusy(false);
+    if (r.error) { toast(r.error, 'error'); return; }
+    if (r.synced) toast(`Synced ${plural(r.synced, 'data call')} to the registry`);
+    setFailed(r.results.filter(x => !x.ok));
+    load();
+  };
+
+  if (!items) return null;
+  if (items.error) return html`<div style=${{ marginBottom: 16 }}><${Alert} kind="warn">Couldn't check registry sync: ${items.error}<//></div>`;
+  if (items.length === 0 && failed.length === 0) return html`<div className="toolbar"><span className="badge good">Registry in sync — every data call has a SQL file</span></div>`;
+  const ready = items.filter(i => i.hasSql);
+  return html`<div className="card pad sync-card">
+    <div className="card-title" style=${{ marginBottom: 8 }}>Sync to registry<small>${plural(items.length, 'data call')} without a SQL file</small></div>
+    <p className="hint" style=${{ marginBottom: 12 }}>These were approved in IT review, so their SQL only lives in the request log. Syncing saves each one as a <span className="mono">.sql</span> file next to the other registry files and links it in the registry.</p>
+    <div className="list">${items.map(i => html`<div key=${i.category + i.dataCallId} className="list-item">
+      <div className="li-main"><b>${i.name}</b><span>${i.category} · currently <span className="mono">${i.fileName}</span></span></div>
+      ${i.hasSql ? html`<span className="badge info plain">Ready</span>` : html`<span className="badge bad plain">No SQL found</span>`}</div>`)}</div>
+    ${failed.map(f => html`<div key=${f.dataCallId} style=${{ marginTop: 10 }}><${Alert} kind="error"><b>${f.name}:</b> ${f.error}<//></div>`)}
+    <div style=${{ marginTop: 14 }}><button className="btn primary" onClick=${sync} disabled=${busy || ready.length === 0}>${busy ? html`<${Spinner} />Syncing…` : html`<${Icon} name="refresh" size=${15} />Sync ${ready.length} to registry`}</button></div>
+  </div>`;
+}
+
 function ITReviewPage() {
   const [status, setStatus] = useState('pending');
   const [data, setData] = useState(null);
@@ -891,6 +924,7 @@ function ITReviewPage() {
     <${PageHead} title="IT review queue" subtitle="Turn requests into registered data calls — draft the SQL with Genie, test it, then approve or send it back with notes.">
       <button className="btn" onClick=${load}><${Icon} name="refresh" size=${15} />Refresh</button>
     <//>
+    <${SyncCard} />
     <div className="toolbar"><${Segmented} value=${status} onChange=${setStatus} options=${[['pending', 'Pending'], ['approved', 'Approved'], ['rejected', 'Rejected'], ['All', 'All']]} /></div>
     ${!data ? html`<${Skeletons} n=${3} h=${100} />` : data.error ? html`<${Alert} kind="error">${data.error}<//>`
       : records.length === 0 ? html`<div className="card"><${Empty} icon="check2" title=${status === 'pending' ? 'Queue is clear' : 'Nothing here'}>${status === 'pending' ? 'No requests are waiting for review.' : 'No requests with this status.'}<//></div>`

@@ -50,6 +50,9 @@ DEMO_PASSWORD = os.getenv("DEMO_PASSWORD", "admin")
 APP_SECRET = os.getenv("APP_SECRET", "")  # empty -> random per process
 SESSION_HOURS = int(os.getenv("SESSION_HOURS", "8"))
 
+# Fallback workspace folder for SQL files when a registry has none to copy the location from
+SQL_ASSET_ROOT = os.getenv("SQL_ASSET_ROOT", "")
+
 # Report / data-call result cache
 REPORT_CACHE_TTL_HOURS = float(os.getenv("REPORT_CACHE_TTL_HOURS", "24"))
 REPORT_CACHE_MAX = int(os.getenv("REPORT_CACHE_MAX", "200"))
