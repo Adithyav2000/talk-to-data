@@ -433,17 +433,19 @@ def my_requests(user: dict = Depends(needs("data_calls"))):
 
 
 # ======================================================================
-# Governance  (Compliance Admin control tower)
+# Governance  (Admin control tower)
 # ======================================================================
 @app.get("/api/governance")
-def governance(user: dict = Depends(needs("governance"))):
+def governance(category: str | None = None, user: dict = Depends(needs("governance"))):
     svc = get_data_svc()
     warnings: list[str] = []
-    calls = _load_calls(svc, user, warnings)
+    # Optionally narrow to one registry; everything below uses the narrowed view.
+    view = {**user, "registries": [_registry(user, category)] if category else user["registries"]}
+    calls = _load_calls(svc, view, warnings)
     reqs_res = svc.get_it_requests()
     if "error" in reqs_res:
         warnings.append(f"Request log: {reqs_res['error']}")
-    reqs = [r for r in _records(reqs_res) if _in_scope(r, user)]
+    reqs = [r for r in _records(reqs_res) if _in_scope(r, view)]
     if warnings and not calls and not reqs:
         return JSONResponse(status_code=502, content={"error": " | ".join(warnings)})
 
@@ -477,6 +479,7 @@ def governance(user: dict = Depends(needs("governance"))):
 
     return {
         "registries": user["registries"],
+        "selected": category,
         "scorecard": {
             "total": len(calls),
             "passing": by_state["TESTED_PASS"],

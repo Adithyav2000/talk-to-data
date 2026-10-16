@@ -708,7 +708,7 @@ function AskDataPage({ opts = {} }) {
 }
 
 // ============================================================
-// Governance  --  Compliance Admin control tower
+// Governance  --  Admin control tower
 // ============================================================
 const SC_DEF = {
   passRate: { label: 'Test pass rate', icon: 'shield', color: '--accent', soft: '--accent-soft', suffix: '%', sub: () => 'of tested calls' },
@@ -720,9 +720,11 @@ const SC_DEF = {
 function GovernancePage({ go }) {
   const toast = useToast();
   const [d, setD] = useState(null);
+  const { user } = useAuth();
   const [busyId, setBusyId] = useState(null);
-  const load = () => { setD(null); api('/api/governance').then(setD); };
-  useEffect(load, []);
+  const [reg, setReg] = useState('');
+  const load = () => { setD(null); api(`/api/governance${reg ? `?category=${encodeURIComponent(reg)}` : ''}`).then(setD); };
+  useEffect(load, [reg]);
 
   const signOff = async (c, state) => {
     setBusyId(c.data_call_id);
@@ -731,22 +733,24 @@ function GovernancePage({ go }) {
     if (r.success) { toast(`“${c.data_call_name}” marked ${state === 'TESTED_PASS' ? 'passing' : 'failing'}`); load(); } else toast(r.error || 'Update failed', 'error');
   };
 
-  if (!d) return html`<div><${PageHead} title="Governance" subtitle="Loading registry health…" /><${Skeletons} n=${4} h=${118} /></div>`;
+  const tabs = user.registries.length > 1 ? html`<div className="toolbar"><${Segmented} value=${reg} onChange=${setReg} options=${[['', 'All registries'], ...user.registries.map(r => [r, r])]} /></div>` : null;
+  if (!d) return html`<div><${PageHead} title="Governance" subtitle="Loading registry health…" />${tabs}<${Skeletons} n=${4} h=${118} /></div>`;
   if (d.error) return html`<div><${PageHead} title="Governance" /><${Alert} kind="error">${d.error}<//></div>`;
 
   const s = d.scorecard;
   const maxDemand = Math.max(1, ...d.demand.map(x => x.requests));
   return html`<div>
-    <${PageHead} title="Governance" subtitle=${`${d.registries.join(' & ')} registry control tower — what needs retesting, what is waiting on IT, and what people keep asking for.`}>
+    <${PageHead} title="Governance" subtitle="Registry control tower — what needs retesting, what is waiting on IT, and what people keep asking for.">
       <button className="btn" onClick=${load}><${Icon} name="refresh" size=${15} />Refresh</button>
     <//>
+    ${tabs}
     ${d.warnings?.length > 0 && html`<div style=${{ marginBottom: 16 }}><${Alert} kind="warn">Some figures are partial: ${d.warnings.join(' · ')}<//></div>`}
     <div className="kpis">${Object.keys(SC_DEF).map(k => html`<${Kpi} key=${k} def=${SC_DEF[k]} value=${s[k]} />`)}</div>
 
     <div className="grid-2">
       <div className="card pad"><div className="card-title">Retest queue<small>${plural(d.attention.length, 'call')} need sign-off</small></div>
         ${d.attention.length === 0 ? html`<${Empty} icon="check2" title="Everything is tested and passing" />` : html`<div className="list scroll-list">${d.attention.map(c => html`<div key=${c.category + c.data_call_id} className="list-item">
-          <div className="li-main"><b>${c.data_call_name}</b><span>${c.file_name}</span></div>
+          <div className="li-main"><b>${c.data_call_name}</b><span>${c.category} · ${c.file_name}</span></div>
           <${StatusBadge} status=${c.state} />
           <div className="mini-actions">
             <button className="btn sm" disabled=${busyId === c.data_call_id} title="Record a passing test" onClick=${() => signOff(c, 'TESTED_PASS')}><${Icon} name="check" size=${13} />Pass</button>
@@ -756,7 +760,7 @@ function GovernancePage({ go }) {
 
       <div className="card pad"><div className="card-title">Review SLA<small>target ${d.slaDays} days · avg ${d.stats.avgReviewDays ?? '—'} d</small></div>
         ${d.pending.length === 0 ? html`<${Empty} icon="check2" title="No requests waiting on IT" />` : html`<div className="list scroll-list">${d.pending.map(r => html`<div key=${r.id} className="list-item">
-          <div className="li-main"><b>${r.request_description}</b><span>${r.requested_by} · ${fmtDate(r.requested_at)}</span></div>
+          <div className="li-main"><b>${r.request_description}</b><span>${r.category || 'Compliance'} · ${r.requested_by} · ${fmtDate(r.requested_at)}</span></div>
           <span className=${'badge ' + (r.overdue ? 'bad' : 'warn')}>${r.ageDays == null ? '—' : `${Math.round(r.ageDays)} d`}${r.overdue ? ' overdue' : ''}</span></div>`)}</div>`}
       </div>
     </div>

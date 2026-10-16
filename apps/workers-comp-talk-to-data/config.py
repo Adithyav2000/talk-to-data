@@ -59,20 +59,20 @@ REVIEW_SLA_DAYS = int(os.getenv("REVIEW_SLA_DAYS", "3"))
 # `registries` limits which data-call registries a persona can see, run and
 # request from. It is enforced server-side.
 PERSONAS = {
-    "compliance_admin": {
+    "admin": {
         "password": DEMO_PASSWORD,
-        "name": "Compliance Admin",
+        "name": "Admin",
         "role": "admin",
-        "title": "Head of Compliance",
+        "title": "Data Governance Lead",
         "icon": "shield",
         "accent": "#1f7a5c",
-        "tagline": "Governs the Compliance registry: retest queue, review SLAs and demand signals.",
-        "registries": ["Compliance"],
+        "tagline": "Governs every registry: retest queue, review SLAs and demand signals.",
+        "registries": ALL_REGISTRIES,
         "permissions": ["data_calls", "reports", "governance", "see_all_requests"],
         "kpis": ["needsAttention", "passRate", "oldestPendingDays", "avgReviewDays"],
         "quickActions": [
             {"label": "Open governance", "desc": "Retest queue, SLAs and audit trail", "page": "Governance"},
-            {"label": "Browse data calls", "desc": "Search and run Compliance calls", "page": "Data Calls"},
+            {"label": "Browse data calls", "desc": "Search and run calls in both registries", "page": "Data Calls"},
             {"label": "Ask the data", "desc": "Chat with Genie for instant answers", "page": "Ask Data"},
         ],
     },
