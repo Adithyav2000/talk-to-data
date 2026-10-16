@@ -668,13 +668,16 @@ function AskDataPage({ opts = {} }) {
   const [text, setText] = useState('');
   const endRef = useRef(null);
   const sent = useRef(false);
+  const hist = useRef([]);  // earlier questions in this conversation; lets the server cache follow-ups
 
-  const send = useCallback(async (prompt, cid, refresh = false) => {
+  const send = useCallback(async (prompt, cid, refresh = false, history = hist.current) => {
     const p = prompt.trim(); if (!p) return;
+    const before = [...history];
     setMsgs(m => [...m, { role: 'user', text: p }]); setText(''); setBusy(true);
-    const res = await post('/api/reports/generate', { prompt: p, conversationId: cid ?? null, refresh });
+    const res = await post('/api/reports/generate', { prompt: p, conversationId: cid ?? null, refresh, history: before });
     if (res.conversation_id) setConvId(res.conversation_id);
-    setMsgs(m => [...m, { role: 'bot', res, q: p }]); setBusy(false);
+    if (!res.error && history === hist.current) hist.current = [...before, p];
+    setMsgs(m => [...m, { role: 'bot', res, q: p, before }]); setBusy(false);
   }, []);
 
   useEffect(() => {
@@ -683,7 +686,7 @@ function AskDataPage({ opts = {} }) {
   useEffect(() => { if (opts.prompt && !sent.current) { sent.current = true; send(opts.prompt); } }, [opts.prompt, send]);
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' }); }, [msgs, busy]);
 
-  const reset = () => { setMsgs([]); setConvId(null); setText(''); };
+  const reset = () => { setMsgs([]); setConvId(null); setText(''); hist.current = []; };
   const onKey = e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); if (!busy) send(text, convId); } };
 
   return html`<div className="page chat-page">
@@ -701,7 +704,7 @@ function AskDataPage({ opts = {} }) {
       </div>`}
       ${msgs.map((m, i) => m.role === 'user' ? html`<div key=${i} className="msg-user">${m.text}</div>` : html`<div key=${i} className="msg-bot">
         <div className="bot-av"><${Icon} name="spark" size=${17} /></div>
-        <div className="card bubble"><${ResultView} res=${m.res} name=${m.q} onRefresh=${() => send(m.q, null, true)} />
+        <div className="card bubble"><${ResultView} res=${m.res} name=${m.q} onRefresh=${() => send(m.q, m.before.length ? convId : null, true, m.before)} />
           ${!m.res.error && !m.res.text && !m.res.columns && html`<span className="hint">Genie didn't return anything for that. Try rephrasing.</span>`}</div></div>`)}
       ${busy && html`<div className="msg-bot"><div className="bot-av"><${Icon} name="spark" size=${17} /></div>
         <div className="card bubble"><span className="typing"><i></i><i></i><i></i></span> <span className="hint" style=${{ marginLeft: 8 }}>Genie is analysing your data…</span></div></div>`}

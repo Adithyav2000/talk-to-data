@@ -110,6 +110,7 @@ class ReportRequest(BaseModel):
     prompt: str
     conversationId: str | None = None
     refresh: bool = False
+    history: list[str] = []  # earlier questions in this Ask Data conversation
 
 
 class GenerateSqlRequest(BaseModel):
@@ -242,20 +243,35 @@ def _ensure_data(res: dict) -> dict:
     return res
 
 
-def _cached_ask(prompt: str, conversation_id: str | None, refresh: bool) -> dict:
-    """Ask Genie, reusing a recent answer to the same first question.
+def _cached_ask(prompt: str, conversation_id: str | None, refresh: bool,
+                history: list[str] | None = None) -> dict:
+    """Ask Genie, reusing a recent answer to the same question in the same context.
 
-    Follow-ups depend on the conversation, so they always go to Genie. Only
-    successful tabular answers are stored; clarifying questions and errors are not.
+    `history` is the earlier questions of an Ask Data conversation. It makes a
+    follow-up's cache key unique to its context, so follow-ups are cacheable too.
+    Without history, a reply inside an existing conversation depends on Genie's
+    server-side context and is never cached. Only successful tabular answers are
+    stored; clarifying questions and errors are not. Cached copies carry no
+    conversation id, so users never share (and pollute) a Genie conversation.
     """
-    if conversation_id:
+    history = [h for h in (history or []) if h and h.strip()][-6:]
+    if conversation_id and not history:
         return _ensure_data(get_genie().ask(prompt, conversation_id=conversation_id))
-    key = report_cache.make_key("ask", prompt)
+
+    key = report_cache.make_key("ask", *history, prompt)
     if not refresh and (hit := report_cache.get(key)):
         return hit
-    res = _ensure_data(get_genie().ask(prompt))
+
+    if conversation_id or not history:
+        res = _ensure_data(get_genie().ask(prompt, conversation_id=conversation_id))
+    else:
+        # A follow-up whose conversation was served from cache: rebuild the context.
+        earlier = " ".join(f"({i}) {h}" for i, h in enumerate(history, 1))
+        res = _ensure_data(get_genie().ask(
+            f"Earlier questions in this conversation: {earlier}. Now answer this follow-up: {prompt}"
+        ))
     if report_cache.cacheable(res):
-        report_cache.put(key, res)
+        report_cache.put(key, {k: v for k, v in res.items() if k != "conversation_id"})
     return res
 
 
@@ -538,7 +554,7 @@ def report_categories(user: dict = Depends(needs("reports"))):
 
 @app.post("/api/reports/generate")
 def generate_report(req: ReportRequest, user: dict = Depends(needs("reports"))):
-    return _cached_ask(req.prompt, req.conversationId, req.refresh)
+    return _cached_ask(req.prompt, req.conversationId, req.refresh, req.history)
 
 
 # ======================================================================
