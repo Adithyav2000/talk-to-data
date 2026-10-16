@@ -1,4 +1,4 @@
-"""Genie API client wrapper for the Workers' Comp Talk-to-Data app."""
+"""Genie API client wrapper for the Claimsight app."""
 
 import os
 import time

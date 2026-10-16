@@ -1,5 +1,5 @@
 // ============================================================
-// Workers' Comp · Talk to Data  --  React frontend (no UI kit)
+// Claimsight · Talk to Data  --  React frontend (no UI kit)
 // ============================================================
 import React, { useState, useEffect, useCallback, useRef, createContext, useContext, useMemo } from 'react';
 import { createRoot } from 'react-dom/client';
@@ -53,7 +53,7 @@ const Logo = () => html`<div className="brand-mark"><${Icon} name="trend" size=$
 // ============================================================
 // Formatting helpers
 // ============================================================
-const CH = ['#1f7a5c', '#d99a2b', '#3b82a6', '#d1604a', '#7c6fc7', '#6aa84f', '#b08d57', '#4aa3a0'];
+const CH = ['#54755a', '#d99a2b', '#3b82a6', '#d1604a', '#7c6fc7', '#6aa84f', '#b08d57', '#4aa3a0'];
 const TIME_RE = /date|month|year|quarter|week|day|time|period/i;
 const ID_RE = /(^|_)(id|zip|code|number|no)$/i;
 const isNum = v => v != null && v !== '' && typeof v !== 'boolean' && !isNaN(Number(v));
@@ -321,7 +321,12 @@ function ExportDialog({ res, name, onClose }) {
 }
 
 // ---- unified result view ----
-function ResultView({ res, name = 'result' }) {
+const timeAgo = iso => {
+  const m = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
+  return m < 1 ? 'just now' : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} d ago`;
+};
+
+function ResultView({ res, name = 'result', onRefresh }) {
   const hasData = !!(res?.columns?.length && res?.rows?.length);
   const [tab, setTab] = useState(hasData ? 'chart' : 'data');
   const [exporting, setExporting] = useState(false);
@@ -332,6 +337,8 @@ function ResultView({ res, name = 'result' }) {
   return html`<div className="result">
     ${res.text && html`<div className="result-note">${res.text}</div>`}
     ${!hasData && res.columns && !res.text && html`<${Empty} title="No rows returned">The query ran, but nothing matched.<//>`}
+    ${res.cached && html`<div className="cache-note"><span><${Icon} name="clock" size=${14} />Cached result from ${timeAgo(res.cachedAt)} · refreshes daily</span>
+      ${onRefresh && html`<button className="btn ghost sm" onClick=${onRefresh}><${Icon} name="refresh" size=${13} />Refresh now</button>`}</div>`}
     ${tabs.length > 0 && html`<div className="result-head">
       <${Segmented} value=${tab} onChange=${setTab} options=${tabs} />
       ${hasData && html`<button className="btn sm" onClick=${() => setExporting(true)}><${Icon} name="download" size=${15} />Export</button>`}
@@ -348,9 +355,9 @@ function useGenie(endpoint, onResult) {
   const [msgs, setMsgs] = useState([]);
   const [convId, setConvId] = useState(null);
   const [busy, setBusy] = useState(false);
-  const send = async (label, body) => {
+  const send = async (label, body, fresh = false) => {
     setMsgs(m => [...m, { role: 'user', text: label }]); setBusy(true);
-    const res = await post(endpoint, { ...body, conversationId: convId });
+    const res = await post(endpoint, { ...body, conversationId: fresh ? null : convId });
     if (res.conversation_id) setConvId(res.conversation_id);
     setMsgs(m => [...m, { role: 'bot', res, q: label }]); setBusy(false);
     if (onResult) onResult(res);
@@ -360,7 +367,7 @@ function useGenie(endpoint, onResult) {
   return { msgs, busy, send, reset };
 }
 
-function GenieThread({ g, name, onReply, placeholder = 'Reply to Genie…' }) {
+function GenieThread({ g, name, onReply, onRefresh, placeholder = 'Reply to Genie…' }) {
   const [text, setText] = useState('');
   if (!g.msgs.length && !g.busy) return null;
   const last = g.msgs[g.msgs.length - 1];
@@ -370,7 +377,7 @@ function GenieThread({ g, name, onReply, placeholder = 'Reply to Genie…' }) {
     ${g.msgs.map((m, i) => m.role === 'user'
       ? html`<div key=${i} className="msg-user sm">${m.text}</div>`
       : html`<div key=${i} className="msg-bot"><div className="bot-av"><${Icon} name="spark" size=${17} /></div>
-          <div className="card bubble"><${ResultView} res=${m.res} name=${name} /></div></div>`)}
+          <div className="card bubble"><${ResultView} res=${m.res} name=${name} onRefresh=${onRefresh} /></div></div>`)}
     ${g.busy && html`<div className="msg-bot"><div className="bot-av"><${Icon} name="spark" size=${17} /></div>
       <div className="card bubble"><span className="typing"><i></i><i></i><i></i></span><span className="hint" style=${{ marginLeft: 8 }}>Genie is working…</span></div></div>`}
     ${asking && !g.busy && html`<${Alert} kind="info">Genie needs a bit more detail. Answer below and it will carry on.<//>`}
@@ -410,9 +417,9 @@ function LoginPage() {
 
   return html`<div className="login">
     <section className="login-hero">
-      <div className="brand"><${Logo} /><div><b>Workers' Compensation</b><span>Talk to Data</span></div></div>
+      <div className="brand"><${Logo} /><div><b>Claimsight</b><span>Talk to Data</span></div></div>
       <div>
-        <h1>Ask your compliance data <em>anything.</em></h1>
+        <h1>Ask your claims data <em>anything.</em></h1>
         <p className="lead">One workspace for the data-call registry, natural-language analytics and the IT review pipeline — tailored to how you work.</p>
       </div>
       <div className="hero-stats">
@@ -497,7 +504,7 @@ function HomePage({ go }) {
     <div style=${{ marginTop: 8 }}><button className="btn sm" onClick=${load}><${Icon} name="refresh" size=${14} />Retry</button></div><//></div>`;
 
   const sb = d.stateBreakdown || {};
-  const health = [['TESTED_PASS', 'Passing', '#1f7a5c'], ['TESTED_FAIL', 'Failing', '#d1604a'], ['NA', 'Untested', '#b4c0b8']].map(([k, l, c]) => ({ k, name: l, value: sb[k] || 0, color: c }));
+  const health = [['TESTED_PASS', 'Passing', '#54755a'], ['TESTED_FAIL', 'Failing', '#d1604a'], ['NA', 'Untested', '#b4c0b8']].map(([k, l, c]) => ({ k, name: l, value: sb[k] || 0, color: c }));
   const healthTotal = health.reduce((s, h) => s + h.value, 0);
   const rs = d.requestStatus || {};
   const pipeline = [['pending', 'Pending', 'var(--amber)'], ['approved', 'Approved', 'var(--accent)'], ['rejected', 'Rejected', 'var(--red)']];
@@ -544,9 +551,9 @@ function RunPanel({ call, onClose }) {
   const [to, setTo] = useState(new Date().toISOString().split('T')[0]);
   const g = useGenie('/api/data-calls/execute');
   const started = g.msgs.length > 0 || g.busy;
-  const run = () => {
+  const run = (refresh = false) => {
     g.reset();
-    g.send(`Run “${call.data_call_name}” from ${from} to ${to}`, { description: call.description || call.data_call_name, fromDate: from, toDate: to });
+    g.send(`Run “${call.data_call_name}” from ${from} to ${to}`, { description: call.description || call.data_call_name, fromDate: from, toDate: to, refresh }, true);
   };
   return html`<${Drawer} title=${call.data_call_name} subtitle=${call.description} onClose=${onClose}>
     <div className="card pad" style=${{ display: 'grid', gap: 14 }}>
@@ -554,9 +561,9 @@ function RunPanel({ call, onClose }) {
         <div className="field"><label>From</label><input className="input" type="date" value=${from} max=${to} onChange=${e => setFrom(e.target.value)} /></div>
         <div className="field"><label>To</label><input className="input" type="date" value=${to} min=${from} onChange=${e => setTo(e.target.value)} /></div>
       </div>
-      <button className="btn primary" onClick=${run} disabled=${g.busy}>${g.busy ? html`<${Spinner} />Running via Genie…` : html`<${Icon} name="play" size=${14} />${started ? 'Run again' : 'Run data call'}`}</button>
+      <button className="btn primary" onClick=${() => run(started)} disabled=${g.busy}>${g.busy ? html`<${Spinner} />Running via Genie…` : html`<${Icon} name="play" size=${14} />${started ? 'Run again' : 'Run data call'}`}</button>
     </div>
-    <${GenieThread} g=${g} name=${call.data_call_name} onReply=${t => g.send(t, { description: t, fromDate: from, toDate: to })} />
+    <${GenieThread} g=${g} name=${call.data_call_name} onRefresh=${() => run(true)} onReply=${t => g.send(t, { description: t, fromDate: from, toDate: to })} />
   <//>`;
 }
 
@@ -662,10 +669,10 @@ function AskDataPage({ opts = {} }) {
   const endRef = useRef(null);
   const sent = useRef(false);
 
-  const send = useCallback(async (prompt, cid) => {
+  const send = useCallback(async (prompt, cid, refresh = false) => {
     const p = prompt.trim(); if (!p) return;
     setMsgs(m => [...m, { role: 'user', text: p }]); setText(''); setBusy(true);
-    const res = await post('/api/reports/generate', { prompt: p, conversationId: cid ?? null });
+    const res = await post('/api/reports/generate', { prompt: p, conversationId: cid ?? null, refresh });
     if (res.conversation_id) setConvId(res.conversation_id);
     setMsgs(m => [...m, { role: 'bot', res, q: p }]); setBusy(false);
   }, []);
@@ -694,7 +701,7 @@ function AskDataPage({ opts = {} }) {
       </div>`}
       ${msgs.map((m, i) => m.role === 'user' ? html`<div key=${i} className="msg-user">${m.text}</div>` : html`<div key=${i} className="msg-bot">
         <div className="bot-av"><${Icon} name="spark" size=${17} /></div>
-        <div className="card bubble"><${ResultView} res=${m.res} name=${m.q} />
+        <div className="card bubble"><${ResultView} res=${m.res} name=${m.q} onRefresh=${() => send(m.q, null, true)} />
           ${!m.res.error && !m.res.text && !m.res.columns && html`<span className="hint">Genie didn't return anything for that. Try rephrasing.</span>`}</div></div>`)}
       ${busy && html`<div className="msg-bot"><div className="bot-av"><${Icon} name="spark" size=${17} /></div>
         <div className="card bubble"><span className="typing"><i></i><i></i><i></i></span> <span className="hint" style=${{ marginLeft: 8 }}>Genie is analysing your data…</span></div></div>`}
@@ -795,7 +802,7 @@ function ReviewPanel({ req, onDone }) {
   const [notes, setNotes] = useState('');
   const g = useGenie('/api/it-review/generate-sql', r => { if (r.sql) setSql(r.sql); });
 
-  const generate = () => { g.reset(); g.send('Draft the SQL for this request', { description: req.request_description }); };
+  const generate = () => { g.reset(); g.send('Draft the SQL for this request', { description: req.request_description }, true); };
   const approve = async e => {
     e.preventDefault(); setBusy('approve');
     const r = await post('/api/it-review/approve', { requestId: Number(req.id), sqlQuery: sql, dataCallName: name.trim(), description: req.request_description, state, category: cat });
@@ -926,7 +933,7 @@ function Shell() {
   return html`<div className="shell">
     <div className=${'scrim' + (open ? ' show' : '')} onClick=${() => setOpen(false)} />
     <aside className=${'side' + (open ? ' open' : '')}>
-      <div className="brand"><${Logo} /><div><b>Workers' Comp</b><span>Talk to Data</span></div></div>
+      <div className="brand"><${Logo} /><div><b>Claimsight</b><span>Talk to Data</span></div></div>
       <div className="nav-label">Workspace</div>
       <nav className="nav">${allowed.map(n => html`<button key=${n.page} className=${page === n.page ? 'on' : ''} onClick=${() => go(n.page)}><${Icon} name=${n.icon} size=${19} />${n.label}</button>`)}</nav>
       <div className="side-foot">

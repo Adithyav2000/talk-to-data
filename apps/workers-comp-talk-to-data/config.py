@@ -50,6 +50,10 @@ DEMO_PASSWORD = os.getenv("DEMO_PASSWORD", "admin")
 APP_SECRET = os.getenv("APP_SECRET", "")  # empty -> random per process
 SESSION_HOURS = int(os.getenv("SESSION_HOURS", "8"))
 
+# Report / data-call result cache
+REPORT_CACHE_TTL_HOURS = float(os.getenv("REPORT_CACHE_TTL_HOURS", "24"))
+REPORT_CACHE_MAX = int(os.getenv("REPORT_CACHE_MAX", "200"))
+
 ALL_REGISTRIES = list(DATA_CALL_CATEGORIES.keys())
 
 # Governance: a data call needs attention when it is failing or untested, and a
@@ -65,7 +69,7 @@ PERSONAS = {
         "role": "admin",
         "title": "Data Governance Lead",
         "icon": "shield",
-        "accent": "#1f7a5c",
+        "accent": "#54755a",
         "tagline": "Governs every registry: retest queue, review SLAs and demand signals.",
         "registries": ALL_REGISTRIES,
         "permissions": ["data_calls", "reports", "governance", "see_all_requests"],

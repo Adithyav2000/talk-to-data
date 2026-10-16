@@ -1,4 +1,4 @@
-"""Workers' Compensation Talk-to-Data  --  FastAPI Backend."""
+"""Claimsight  --  FastAPI backend."""
 
 import base64
 import hashlib
@@ -23,6 +23,7 @@ from openpyxl.utils import get_column_letter
 from pydantic import BaseModel
 
 import config
+import report_cache
 from data_service import DataService
 from genie_client import GenieClient
 
@@ -32,7 +33,7 @@ logger = logging.getLogger(__name__)
 # ======================================================================
 # App
 # ======================================================================
-app = FastAPI(title="Workers' Comp Talk-to-Data")
+app = FastAPI(title="Claimsight")
 
 STATIC_DIR = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
@@ -91,6 +92,7 @@ class ExecuteDataCallRequest(BaseModel):
     fromDate: str = ""
     toDate: str = ""
     conversationId: str | None = None
+    refresh: bool = False
 
 
 class SubmitRequest(BaseModel):
@@ -107,6 +109,7 @@ class SetStateRequest(BaseModel):
 class ReportRequest(BaseModel):
     prompt: str
     conversationId: str | None = None
+    refresh: bool = False
 
 
 class GenerateSqlRequest(BaseModel):
@@ -236,6 +239,23 @@ def _ensure_data(res: dict) -> dict:
     if "columns" in result and result.get("rows"):
         res["columns"] = result["columns"]
         res["rows"] = result["rows"]
+    return res
+
+
+def _cached_ask(prompt: str, conversation_id: str | None, refresh: bool) -> dict:
+    """Ask Genie, reusing a recent answer to the same first question.
+
+    Follow-ups depend on the conversation, so they always go to Genie. Only
+    successful tabular answers are stored; clarifying questions and errors are not.
+    """
+    if conversation_id:
+        return _ensure_data(get_genie().ask(prompt, conversation_id=conversation_id))
+    key = report_cache.make_key("ask", prompt)
+    if not refresh and (hit := report_cache.get(key)):
+        return hit
+    res = _ensure_data(get_genie().ask(prompt))
+    if report_cache.cacheable(res):
+        report_cache.put(key, res)
     return res
 
 
@@ -409,7 +429,7 @@ def get_data_calls(category: str | None = None, state: str = "All", search: str 
 def execute_data_call(req: ExecuteDataCallRequest, user: dict = Depends(needs("data_calls"))):
     # Dates only frame the first question; replies in a conversation are sent as typed.
     prompt = req.description if req.conversationId else f"{req.description} (from {req.fromDate} to {req.toDate})"
-    return _ensure_data(get_genie().ask(prompt, conversation_id=req.conversationId))
+    return _cached_ask(prompt, req.conversationId, req.refresh)
 
 
 @app.post("/api/data-calls/request")
@@ -518,7 +538,7 @@ def report_categories(user: dict = Depends(needs("reports"))):
 
 @app.post("/api/reports/generate")
 def generate_report(req: ReportRequest, user: dict = Depends(needs("reports"))):
-    return _ensure_data(get_genie().ask(req.prompt, conversation_id=req.conversationId))
+    return _cached_ask(req.prompt, req.conversationId, req.refresh)
 
 
 # ======================================================================
