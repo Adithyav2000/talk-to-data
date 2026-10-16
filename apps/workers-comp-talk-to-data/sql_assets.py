@@ -4,9 +4,11 @@ A data call's SQL lives in a file (the registry's `asset_location`). To run it
 for a chosen period we:
 
   1. substitute date placeholders  (:from_date, {{from_date}}, ${from_date}, {from_date} ...)
-  2. otherwise, if the file hard-codes two or more ISO date literals ('2020-01-01'),
+  2. otherwise, if the file filters on a year (YEAR(c.accident_date) >= 2020), rewrite
+     that filter into a real date range on the same column
+  3. otherwise, if the file hard-codes two or more ISO date literals ('2020-01-01'),
      treat the earliest as the period start and the latest as the period end
-  3. otherwise run it exactly as written
+  4. otherwise run it exactly as written
 
 The query is also checked to be a single read-only SELECT / WITH statement,
 because it is executed with the app's warehouse permissions.
@@ -24,6 +26,13 @@ _FORBIDDEN = re.compile(
 )
 _LITERAL = re.compile(r"'(?:[^']|'')*'")
 _DATE_LITERAL = re.compile(r"(?<![\w.])((?:DATE\s*)?)'(\d{4}-\d{2}-\d{2})'", re.I)
+
+
+# YEAR(col) <op> 2020   and   YEAR(col) BETWEEN 2020 AND 2023
+_YEAR_FILTER = re.compile(
+    r"YEAR\(\s*(?P<col>[\w.]+)\s*\)\s*(?:BETWEEN\s+\d{4}\s+AND\s+\d{4}|(?:>=|<=|<>|!=|>|<|=)\s*\d{4})",
+    re.I,
+)
 
 
 class SqlAssetError(ValueError):
@@ -57,6 +66,29 @@ def _substitute(sql: str, pattern: re.Pattern, value: str) -> tuple[str, int]:
     return "".join(out), count
 
 
+def _rewrite_year_filters(sql: str, start: str, end: str) -> tuple[str, int]:
+    """Turn `YEAR(col) >= 2020` style filters into a date range on the same column.
+
+    The first YEAR(col) predicate for a column becomes the whole range; any further
+    YEAR(col) predicates on that column (e.g. an upper bound) are neutralised to 1=1,
+    which assumes they are ANDed with the rest of the WHERE clause.
+    """
+    seen: set[str] = set()
+    count = 0
+
+    def repl(m: re.Match) -> str:
+        nonlocal count
+        col = m.group("col")
+        count += 1
+        if col.lower() in seen:
+            return "1=1"
+        seen.add(col.lower())
+        # `< end + 1 day` keeps the end date inclusive for DATE and TIMESTAMP columns alike
+        return f"({col} >= DATE'{start}' AND {col} < DATE_ADD(DATE'{end}', 1))"
+
+    return _YEAR_FILTER.sub(repl, sql), count
+
+
 def parse_period(from_date: str, to_date: str) -> tuple[str, str]:
     try:
         start, end = date.fromisoformat(from_date), date.fromisoformat(to_date)
@@ -82,7 +114,10 @@ def check_read_only(sql: str) -> str:
 
 
 def apply_period(sql: str, from_date: str, to_date: str) -> tuple[str, str, int]:
-    """Return (sql, mode, replacements). mode is 'placeholders', 'literals' or 'none'."""
+    """Return (sql, mode, replacements).
+
+    mode is 'placeholders', 'year_filter', 'literals' or 'none'.
+    """
     start, end = parse_period(from_date, to_date)
     body = check_read_only(sql)
 
@@ -90,6 +125,10 @@ def apply_period(sql: str, from_date: str, to_date: str) -> tuple[str, str, int]
     body, n_to = _substitute(body, _placeholder_re(TO_NAMES), end)
     if n_from + n_to:
         return body, "placeholders", n_from + n_to
+
+    body, n_year = _rewrite_year_filters(body, start, end)
+    if n_year:
+        return body, "year_filter", n_year
 
     found = sorted({m.group(2) for m in _DATE_LITERAL.finditer(body)})
     if len(found) >= 2:

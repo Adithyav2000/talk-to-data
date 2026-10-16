@@ -192,7 +192,8 @@ class DataService:
             if path.startswith("/Volumes/"):
                 return self.w.files.download(path).contents.read().decode("utf-8")
             import base64
-            resp = self.w.workspace.export(path=path, format="AUTO")
+            # Default export format returns files as-is (and notebooks as source).
+            resp = self.w.workspace.export(path=path)
             if resp.content:
                 return base64.b64decode(resp.content).decode("utf-8")
         except Exception as exc:

@@ -551,6 +551,7 @@ function DateNote({ res }) {
   const [from, to] = res.period || [];
   const range = from && to ? `${fmtDate(from)} – ${fmtDate(to)}` : 'your range';
   if (res.dateMode === 'placeholders') return html`<${Alert} kind="ok">Ran for <b>${range}</b>. Date placeholders in the SQL file were filled in (${plural(res.replaced, 'place')}).<//>`;
+  if (res.dateMode === 'year_filter') return html`<${Alert} kind="ok">Ran for <b>${range}</b>. The SQL file's year filter (like <code>YEAR(accident_date) &gt;= 2020</code>) was rewritten to that date range. Check the SQL tab.<//>`;
   if (res.dateMode === 'literals') return html`<${Alert} kind="info">This SQL file hard-codes its dates, so ${plural(res.replaced, 'date literal')} were replaced with <b>${range}</b> (earliest → from, latest → to). Check the SQL tab.<//>`;
   return html`<${Alert} kind="warn"><b>Your date range was not applied.</b> This SQL file has no date placeholder (like <code>:from_date</code> / <code>:to_date</code>), so it ran exactly as written.<//>`;
 }
