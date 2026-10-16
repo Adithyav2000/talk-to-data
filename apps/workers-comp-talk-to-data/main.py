@@ -5,6 +5,7 @@ import hashlib
 import hmac
 import json
 import logging
+import os
 import secrets
 import threading
 import io
@@ -171,7 +172,12 @@ class RejectRequest(BaseModel):
 # ======================================================================
 # Sessions  --  HMAC-signed bearer tokens (no server-side state)
 # ======================================================================
-_SECRET = (config.APP_SECRET or secrets.token_hex(32)).encode()
+# Signing key. APP_SECRET wins; otherwise derive one from the app's service-principal secret,
+# which Databricks Apps injects and which is identical on every instance and restart. A random
+# key is the last resort (local dev only): sessions would not survive a restart or a second instance.
+_SECRET = hashlib.sha256(
+    (config.APP_SECRET or os.environ.get("DATABRICKS_CLIENT_SECRET") or secrets.token_hex(32)).encode()
+).digest()
 
 
 def _b64(raw: bytes) -> str:
@@ -224,8 +230,16 @@ def public_user(username: str) -> dict:
     }
 
 
-def current_user(authorization: str | None = Header(default=None)) -> dict:
-    token = (authorization or "").removeprefix("Bearer ").strip()
+# The session token travels in its own header. Databricks Apps' proxy owns `Authorization` and
+# rejects bearer tokens it did not issue, so a custom token there never reaches this code.
+TOKEN_HEADER = "X-Claimsight-Token"
+
+
+def current_user(
+    x_claimsight_token: str | None = Header(default=None),
+    authorization: str | None = Header(default=None),
+) -> dict:
+    token = (x_claimsight_token or (authorization or "").removeprefix("Bearer ")).strip()
     username = read_token(token) if token else None
     if not username or username not in config.PERSONAS:
         raise HTTPException(status_code=401, detail="Please sign in again.")

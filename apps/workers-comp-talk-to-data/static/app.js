@@ -92,7 +92,7 @@ try { TOKEN = sessionStorage.getItem('wc-token'); } catch (e) { /* storage block
 
 const api = async (url, opts = {}) => {
   try {
-    const headers = { 'Content-Type': 'application/json', ...(TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {}) };
+    const headers = { 'Content-Type': 'application/json', ...(TOKEN ? { 'X-Claimsight-Token': TOKEN } : {}) };
     const r = await fetch(url, { ...opts, headers });
     const data = await r.json().catch(() => ({}));
     if (r.status === 401 && TOKEN) onAuthFail();
@@ -127,6 +127,13 @@ function AuthProvider({ children }) {
     const r = await post('/api/auth/login', { username, password });
     if (r.success) {
       TOKEN = r.token;
+      // Confirm the server accepts the session before entering the app. Behind a proxy a rejected
+      // token would otherwise bounce the user straight back here with no explanation.
+      const me = await api('/api/auth/me');
+      if (!me.user) {
+        TOKEN = null;
+        return { ok: false, error: `Signed in, but the server rejected the session${me.error ? ` (${me.error})` : ''}. Please try again or contact your administrator.` };
+      }
       try { sessionStorage.setItem('wc-token', r.token); } catch (e) { /* ignore */ }
       setUser(r.user);
       return { ok: true };
@@ -290,7 +297,7 @@ function ExportDialog({ res, name, onClose }) {
     setBusy(true);
     try {
       const r = await fetch('/api/export/xlsx', {
-        method: 'POST', headers: { 'Content-Type': 'application/json', ...(TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {}) },
+        method: 'POST', headers: { 'Content-Type': 'application/json', ...(TOKEN ? { 'X-Claimsight-Token': TOKEN } : {}) },
         body: JSON.stringify({ columns: res.columns, rows: res.rows, title: name || 'Data', sql: res.sql || null, ...o }),
       });
       if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || `Export failed (${r.status})`);
