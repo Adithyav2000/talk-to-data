@@ -11,6 +11,7 @@ import io
 import re
 import time
 from collections import Counter
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, Header, HTTPException
@@ -94,6 +95,13 @@ class ExecuteDataCallRequest(BaseModel):
 
 class SubmitRequest(BaseModel):
     description: str
+    category: str | None = None
+
+
+class SetStateRequest(BaseModel):
+    category: str
+    dataCallId: int
+    state: str
 
 
 class ReportRequest(BaseModel):
@@ -188,6 +196,7 @@ def public_user(username: str) -> dict:
         "accent": p["accent"],
         "tagline": p["tagline"],
         "permissions": p["permissions"],
+        "registries": p["registries"],
         "kpis": p["kpis"],
         "quickActions": p["quickActions"],
         "pages": [
@@ -235,6 +244,64 @@ def _records(res: dict) -> list[dict]:
     return [dict(zip(cols, r)) for r in res.get("rows", [])]
 
 
+def _registry(user: dict, category: str | None) -> str:
+    """Resolve a requested registry, refusing any the persona may not use."""
+    allowed = user["registries"]
+    category = category or allowed[0]
+    if category not in allowed:
+        raise HTTPException(status_code=403, detail=f"Your persona cannot access the {category} registry.")
+    return category
+
+
+def _in_scope(req: dict, user: dict) -> bool:
+    # Requests logged before registries were scoped have no category: they were Compliance.
+    return (req.get("category") or "Compliance") in user["registries"]
+
+
+def _ts(value) -> datetime | None:
+    try:
+        d = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+    except (TypeError, ValueError):
+        return None
+
+
+def _days(a: datetime | None, b: datetime | None) -> float | None:
+    return round((b - a).total_seconds() / 86400, 1) if a and b else None
+
+
+def _review_stats(reqs: list[dict]) -> dict:
+    """Turnaround and ageing figures for a set of IT requests."""
+    now = datetime.now(timezone.utc)
+    turnarounds = [
+        t for r in reqs
+        if str(r.get("status")).lower() in ("approved", "rejected")
+        and (t := _days(_ts(r.get("requested_at")), _ts(r.get("reviewed_at")))) is not None
+    ]
+    ages = [
+        a for r in reqs
+        if str(r.get("status")).lower() == "pending"
+        and (a := _days(_ts(r.get("requested_at")), now)) is not None
+    ]
+    return {
+        "avgReviewDays": round(sum(turnarounds) / len(turnarounds), 1) if turnarounds else None,
+        "oldestPendingDays": round(max(ages)) if ages else 0,
+    }
+
+
+def _load_calls(svc: DataService, user: dict, warnings: list[str]) -> list[dict]:
+    calls: list[dict] = []
+    for category in user["registries"]:
+        res = svc.get_data_calls(table=config.DATA_CALL_CATEGORIES[category])
+        if "error" in res:
+            warnings.append(f"{category} registry: {res['error']}")
+            continue
+        for rec in _records(res):
+            rec["category"] = category
+            calls.append(rec)
+    return calls
+
+
 # ======================================================================
 # SPA entry
 # ======================================================================
@@ -249,7 +316,7 @@ def serve_index():
 @app.get("/api/personas")
 def list_personas():
     """Public, password-free list that drives the sign-in screen."""
-    keep = ("username", "name", "title", "icon", "accent", "tagline", "permissions", "pages")
+    keep = ("username", "name", "title", "icon", "accent", "tagline", "permissions", "registries", "pages")
     return {
         "personas": [
             {k: v for k, v in public_user(u).items() if k in keep}
@@ -280,21 +347,13 @@ def dashboard(user: dict = Depends(current_user)):
     svc = get_data_svc()
     warnings: list[str] = []
 
-    calls: list[dict] = []
-    for category, table in config.DATA_CALL_CATEGORIES.items():
-        res = svc.get_data_calls(table=table)
-        if "error" in res:
-            warnings.append(f"{category} registry: {res['error']}")
-            continue
-        for rec in _records(res):
-            rec["category"] = category
-            calls.append(rec)
+    calls = _load_calls(svc, user, warnings)
 
     scope_all = "see_all_requests" in user["permissions"]
     reqs_res = svc.get_it_requests(requested_by=None if scope_all else user["username"])
     if "error" in reqs_res:
         warnings.append(f"Request log: {reqs_res['error']}")
-    reqs = _records(reqs_res)
+    reqs = [r for r in _records(reqs_res) if _in_scope(r, user)]
 
     if warnings and not calls and not reqs:
         return JSONResponse(status_code=502, content={"error": " | ".join(warnings)})
@@ -315,6 +374,8 @@ def dashboard(user: dict = Depends(current_user)):
             "myRequests": len(mine),
             "myPending": sum(1 for r in mine if str(r.get("status")).lower() == "pending"),
             "reportCategories": len(config.REPORT_PROMPTS),
+            "needsAttention": by_state["TESTED_FAIL"] + by_state["NA"],
+            **_review_stats(reqs),
         },
         "stateBreakdown": dict(by_state),
         "categoryBreakdown": dict(Counter(c["category"] for c in calls)),
@@ -331,13 +392,13 @@ def dashboard(user: dict = Depends(current_user)):
 # ======================================================================
 @app.get("/api/data-calls/categories")
 def data_call_categories(user: dict = Depends(needs("data_calls"))):
-    return {"categories": list(config.DATA_CALL_CATEGORIES.keys())}
+    return {"categories": user["registries"]}
 
 
 @app.get("/api/data-calls")
-def get_data_calls(category: str = "Compliance", state: str = "All", search: str = "",
+def get_data_calls(category: str | None = None, state: str = "All", search: str = "",
                    user: dict = Depends(needs("data_calls"))):
-    table = config.DATA_CALL_CATEGORIES.get(category, config.DATA_CALLS_TABLE)
+    table = config.DATA_CALL_CATEGORIES[_registry(user, category)]
     if state not in config.DATA_CALL_STATES:
         state = "All"
     res = get_data_svc().get_data_calls(table=table, state=state, name_search=search or None)
@@ -353,8 +414,9 @@ def execute_data_call(req: ExecuteDataCallRequest, user: dict = Depends(needs("d
 
 @app.post("/api/data-calls/request")
 def submit_data_call_request(req: SubmitRequest, user: dict = Depends(needs("data_calls"))):
+    category = _registry(user, req.category)
     try:
-        out = get_data_svc().submit_request(req.description, user["username"])
+        out = get_data_svc().submit_request(req.description, user["username"], category)
     except RuntimeError as exc:
         return JSONResponse(status_code=502, content={"error": str(exc)})
     return {
@@ -367,7 +429,80 @@ def submit_data_call_request(req: SubmitRequest, user: dict = Depends(needs("dat
 @app.get("/api/data-calls/my-requests")
 def my_requests(user: dict = Depends(needs("data_calls"))):
     res = get_data_svc().get_it_requests(requested_by=user["username"])
-    return {"records": _records(res), "error": res.get("error")}
+    return {"records": [r for r in _records(res) if _in_scope(r, user)], "error": res.get("error")}
+
+
+# ======================================================================
+# Governance  (Compliance Admin control tower)
+# ======================================================================
+@app.get("/api/governance")
+def governance(user: dict = Depends(needs("governance"))):
+    svc = get_data_svc()
+    warnings: list[str] = []
+    calls = _load_calls(svc, user, warnings)
+    reqs_res = svc.get_it_requests()
+    if "error" in reqs_res:
+        warnings.append(f"Request log: {reqs_res['error']}")
+    reqs = [r for r in _records(reqs_res) if _in_scope(r, user)]
+    if warnings and not calls and not reqs:
+        return JSONResponse(status_code=502, content={"error": " | ".join(warnings)})
+
+    now = datetime.now(timezone.utc)
+    by_state = Counter((c.get("state") or "NA") for c in calls)
+    tested = by_state["TESTED_PASS"] + by_state["TESTED_FAIL"]
+
+    # Failing first, then untested: the retest queue.
+    order = {"TESTED_FAIL": 0, "NA": 1}
+    attention = sorted(
+        (c for c in calls if (c.get("state") or "NA") in order),
+        key=lambda c: (order[c.get("state") or "NA"], str(c.get("data_call_name"))),
+    )
+
+    pending = []
+    for r in reqs:
+        if str(r.get("status")).lower() != "pending":
+            continue
+        age = _days(_ts(r.get("requested_at")), now)
+        pending.append({**r, "ageDays": age, "overdue": age is not None and age > config.REVIEW_SLA_DAYS})
+    pending.sort(key=lambda r: -(r["ageDays"] or 0))
+
+    decided = [r for r in reqs if str(r.get("status")).lower() in ("approved", "rejected")]
+    audit = [
+        {**r, "turnaroundDays": _days(_ts(r.get("requested_at")), _ts(r.get("reviewed_at")))}
+        for r in sorted(decided, key=lambda r: str(r.get("reviewed_at") or ""), reverse=True)[:15]
+    ]
+
+    # Demand signal: existing calls people keep asking for something like.
+    demand = Counter(r["matched_data_call"] for r in reqs if r.get("matched_data_call"))
+
+    return {
+        "registries": user["registries"],
+        "scorecard": {
+            "total": len(calls),
+            "passing": by_state["TESTED_PASS"],
+            "failing": by_state["TESTED_FAIL"],
+            "untested": by_state["NA"],
+            "passRate": round(100 * by_state["TESTED_PASS"] / tested) if tested else None,
+            "coverage": round(100 * tested / len(calls)) if calls else None,
+        },
+        "attention": attention,
+        "pending": pending,
+        "audit": audit,
+        "demand": [{"name": n, "requests": c} for n, c in demand.most_common(6)],
+        "stats": _review_stats(reqs),
+        "slaDays": config.REVIEW_SLA_DAYS,
+        "warnings": warnings,
+    }
+
+
+@app.post("/api/governance/set-state")
+def governance_set_state(req: SetStateRequest, user: dict = Depends(needs("governance"))):
+    table = config.DATA_CALL_CATEGORIES[_registry(user, req.category)]
+    try:
+        get_data_svc().set_call_state(table, req.dataCallId, req.state)
+        return {"success": True}
+    except Exception as exc:
+        return {"success": False, "error": str(exc)}
 
 
 # ======================================================================

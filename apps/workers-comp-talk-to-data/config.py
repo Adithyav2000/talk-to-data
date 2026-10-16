@@ -50,6 +50,14 @@ DEMO_PASSWORD = os.getenv("DEMO_PASSWORD", "admin")
 APP_SECRET = os.getenv("APP_SECRET", "")  # empty -> random per process
 SESSION_HOURS = int(os.getenv("SESSION_HOURS", "8"))
 
+ALL_REGISTRIES = list(DATA_CALL_CATEGORIES.keys())
+
+# Governance: a data call needs attention when it is failing or untested, and a
+# pending request is overdue after this many days.
+REVIEW_SLA_DAYS = int(os.getenv("REVIEW_SLA_DAYS", "3"))
+
+# `registries` limits which data-call registries a persona can see, run and
+# request from. It is enforced server-side.
 PERSONAS = {
     "compliance_admin": {
         "password": DEMO_PASSWORD,
@@ -58,11 +66,13 @@ PERSONAS = {
         "title": "Head of Compliance",
         "icon": "shield",
         "accent": "#1f7a5c",
-        "tagline": "Oversight of the data-call registry and reports, with visibility into every request.",
-        "permissions": ["data_calls", "reports", "see_all_requests"],
-        "kpis": ["totalCalls", "passRate", "totalRequests", "pendingReviews"],
+        "tagline": "Governs the Compliance registry: retest queue, review SLAs and demand signals.",
+        "registries": ["Compliance"],
+        "permissions": ["data_calls", "reports", "governance", "see_all_requests"],
+        "kpis": ["needsAttention", "passRate", "oldestPendingDays", "avgReviewDays"],
         "quickActions": [
-            {"label": "Browse data calls", "desc": "Search and run registered calls", "page": "Data Calls"},
+            {"label": "Open governance", "desc": "Retest queue, SLAs and audit trail", "page": "Governance"},
+            {"label": "Browse data calls", "desc": "Search and run Compliance calls", "page": "Data Calls"},
             {"label": "Ask the data", "desc": "Chat with Genie for instant answers", "page": "Ask Data"},
         ],
     },
@@ -73,13 +83,29 @@ PERSONAS = {
         "title": "Regulatory Reporting Analyst",
         "icon": "search",
         "accent": "#3b82a6",
-        "tagline": "Find, run and request the data calls you need for regulatory filings.",
-        "permissions": ["data_calls", "reports"],
+        "tagline": "Find, run and request Compliance data calls for regulatory filings.",
+        "registries": ["Compliance"],
+        "permissions": ["data_calls"],
         "kpis": ["totalCalls", "passRate", "myRequests", "myPending"],
         "quickActions": [
             {"label": "Run a data call", "desc": "Pick a call, set dates, get results", "page": "Data Calls"},
             {"label": "Request a new call", "desc": "Describe what you need; we match it", "page": "Data Calls", "tab": "request"},
-            {"label": "Ask the data", "desc": "Explore with natural language", "page": "Ask Data"},
+        ],
+    },
+    "finance_analyst": {
+        "password": DEMO_PASSWORD,
+        "name": "Finance Analyst",
+        "role": "finance_analyst",
+        "title": "Financial Reporting Analyst",
+        "icon": "wallet",
+        "accent": "#2f9e8f",
+        "tagline": "Find, run and request Financial Reporting data calls for close and reserving.",
+        "registries": ["Financial Reporting"],
+        "permissions": ["data_calls"],
+        "kpis": ["totalCalls", "passRate", "myRequests", "myPending"],
+        "quickActions": [
+            {"label": "Run a data call", "desc": "Pick a call, set dates, get results", "page": "Data Calls"},
+            {"label": "Request a new call", "desc": "Describe what you need; we match it", "page": "Data Calls", "tab": "request"},
         ],
     },
     "it_reviewer": {
@@ -90,11 +116,12 @@ PERSONAS = {
         "icon": "code",
         "accent": "#7c6fc7",
         "tagline": "Turn approved requests into tested, registered data calls.",
+        "registries": ALL_REGISTRIES,
         "permissions": ["data_calls", "it_review", "see_all_requests"],
         "kpis": ["pendingReviews", "approvedCount", "rejectedCount", "totalCalls"],
         "quickActions": [
             {"label": "Open the queue", "desc": "Pending requests waiting on you", "page": "IT Review"},
-            {"label": "Browse registry", "desc": "Check for existing coverage", "page": "Data Calls"},
+            {"label": "Browse registries", "desc": "Check for existing coverage", "page": "Data Calls"},
         ],
     },
     "leadership": {
@@ -105,6 +132,7 @@ PERSONAS = {
         "icon": "chart",
         "accent": "#d99a2b",
         "tagline": "Headline claims and cost analytics, one question away.",
+        "registries": ALL_REGISTRIES,
         "permissions": ["reports"],
         "kpis": ["totalCalls", "passRate", "reportCategories"],
         "quickActions": [
@@ -119,9 +147,11 @@ PERSONAS = {
 PAGE_PERMISSIONS = {
     "Home": None,
     "Data Calls": "data_calls",
+    "Governance": "governance",
     "Ask Data": "reports",
     "IT Review": "it_review",
 }
+
 
 # ---------------------------------------------------------------------------
 # Data-call test states (from registry table)

@@ -143,11 +143,24 @@ class DataService:
                 review_notes          STRING,
                 requested_by          STRING,
                 requested_at          TIMESTAMP,
-                reviewed_at           TIMESTAMP
+                reviewed_at           TIMESTAMP,
+                category              STRING
             )
         """)
         if "error" in res:
             logger.error("Could not create %s: %s", config.IT_REQUESTS_TABLE, res["error"])
+        # Tables created before registries were scoped lack `category`; add it
+        # (errors if it already exists -- that is fine).
+        self.has_category = "error" not in self.execute_sql(
+            f"SELECT category FROM {config.IT_REQUESTS_TABLE} LIMIT 1"
+        )
+        if not self.has_category:
+            alter = self.execute_sql(
+                f"ALTER TABLE {config.IT_REQUESTS_TABLE} ADD COLUMNS (category STRING)"
+            )
+            self.has_category = "error" not in alter
+            if not self.has_category:
+                logger.warning("Requests table has no category column: %s", alter["error"])
 
     # ------------------------------------------------------------------
     # Data-call queries (reads existing registry table)
@@ -197,10 +210,16 @@ class DataService:
     # ------------------------------------------------------------------
     # Semantic matching against existing registry descriptions
     # ------------------------------------------------------------------
-    def find_similar_data_call(self, description: str) -> tuple[str | None, float]:
+    def find_similar_data_call(
+        self, description: str, category: str | None = None
+    ) -> tuple[str | None, float]:
         names: list[str] = []
         descs: list[str] = []
-        for tbl in config.DATA_CALL_CATEGORIES.values():
+        tables = (
+            [config.DATA_CALL_CATEGORIES[category]] if category in config.DATA_CALL_CATEGORIES
+            else list(config.DATA_CALL_CATEGORIES.values())
+        )
+        for tbl in tables:
             result = self.execute_sql(
                 f"SELECT data_call_name, description FROM {tbl}"
             )
@@ -226,17 +245,18 @@ class DataService:
     # ------------------------------------------------------------------
     # Request lifecycle
     # ------------------------------------------------------------------
-    def submit_request(self, description: str, requested_by: str) -> dict:
-        matched, score = self.find_similar_data_call(description)
+    def submit_request(self, description: str, requested_by: str, category: str | None = None) -> dict:
+        matched, score = self.find_similar_data_call(description, category)
         is_new = matched is None
         safe_desc = _q(description)
         matched_val = f"'{_q(matched)}'" if matched else "NULL"
+        with_cat = bool(category) and getattr(self, "has_category", False)
         res = self.execute_sql(f"""
             INSERT INTO {config.IT_REQUESTS_TABLE}
             (request_description, matched_data_call, similarity_score,
-             is_new_request, status, requested_by, requested_at)
+             is_new_request, status, requested_by, requested_at{", category" if with_cat else ""})
             VALUES ('{safe_desc}', {matched_val}, {score}, {is_new},
-                    'pending', '{_q(requested_by)}', current_timestamp())
+                    'pending', '{_q(requested_by)}', current_timestamp(){f", '{_q(category)}'" if with_cat else ""})
         """)
         if "error" in res:
             raise RuntimeError(res["error"])
@@ -279,6 +299,16 @@ class DataService:
                 genie_sql = '{safe_sql}', reviewed_at = current_timestamp()
             WHERE id = {request_id}
         """)
+        if "error" in res:
+            raise RuntimeError(res["error"])
+
+    def set_call_state(self, table: str, data_call_id: int, state: str):
+        """Governance sign-off: record a data call's test state in its registry."""
+        if table not in config.DATA_CALL_CATEGORIES.values():
+            raise ValueError(f"Unknown registry table: {table!r}")
+        res = self.execute_sql(
+            f"UPDATE {table} SET state = '{_check_state(state)}' WHERE data_call_id = {int(data_call_id)}"
+        )
         if "error" in res:
             raise RuntimeError(res["error"])
 

@@ -42,6 +42,7 @@ const ICONS = {
   refresh: 'M21 12a9 9 0 1 1-3-6.7L21 8M21 3v5h-5',
   loader: 'M12 3a9 9 0 1 0 9 9',
   trend: 'M22 7 13.5 15.5l-5-5L2 17M16 7h6v6',
+  wallet: 'M3 7a2 2 0 0 1 2-2h13v4M3 7v11a2 2 0 0 0 2 2h14a1 1 0 0 0 1-1v-9a1 1 0 0 0-1-1H5a2 2 0 0 1-2-2zM16 14h.01',
   check2: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM8 12l3 3 5-6',
 };
 function Icon({ name, size = 18, className = '' }) {
@@ -417,7 +418,7 @@ function LoginPage() {
       <div className="hero-stats">
         <div><b>2</b><span>Registries unified</span></div>
         <div><b>20</b><span>Curated report prompts</span></div>
-        <div><b>4</b><span>Role-based workspaces</span></div>
+        <div><b>5</b><span>Role-based workspaces</span></div>
       </div>
     </section>
     <section className="login-main"><div className="login-box">
@@ -430,7 +431,7 @@ function LoginPage() {
           <span className="pi"><${Icon} name=${p.icon} size=${21} /></span>
           <div><b>${p.name}</b><small>${p.title}</small></div>
           <p>${p.tagline}</p>
-          <div className="access">${p.pages.filter(x => x !== 'Home').map(x => html`<span key=${x}>${PAGE_LABEL[x] || x}</span>`)}</div>
+          <div className="access">${p.registries?.length === 1 && html`<span className="reg">${p.registries[0]} only</span>`}${p.pages.filter(x => x !== 'Home').map(x => html`<span key=${x}>${PAGE_LABEL[x] || x}</span>`)}</div>
         </button>`)}</div>
       ${sel && html`<form className="card signin" onSubmit=${go}>
         ${err && html`<${Alert} kind="error">${err}<//>`}
@@ -457,6 +458,9 @@ const KPI_DEF = {
   rejectedCount: { label: 'Rejected', icon: 'x', color: '--red', soft: '--red-soft', sub: () => 'declined with notes' },
   myRequests: { label: 'Your requests', icon: 'inbox', color: '--violet', soft: '--violet-soft', sub: () => 'submitted by you' },
   myPending: { label: 'Your pending', icon: 'clock', color: '--amber', soft: '--amber-soft', sub: () => 'awaiting IT' },
+  needsAttention: { label: 'Need attention', icon: 'alert', color: '--red', soft: '--red-soft', sub: () => 'failing or untested calls' },
+  oldestPendingDays: { label: 'Oldest pending', icon: 'clock', color: '--amber', soft: '--amber-soft', suffix: ' d', sub: () => 'waiting on IT review' },
+  avgReviewDays: { label: 'Avg review time', icon: 'trend', color: '--violet', soft: '--violet-soft', suffix: ' d', sub: () => 'request to decision' },
   reportCategories: { label: 'Report libraries', icon: 'chart', color: '--blue', soft: '--blue-soft', sub: () => 'ready-made prompts' },
 };
 
@@ -483,7 +487,7 @@ function HomePage({ go }) {
     <h1>${greeting()}, ${user.name}</h1><p>${user.tagline}</p></div>`;
 
   const actions = html`<div className="actions">${user.quickActions.map(a => {
-    const pg = a.page; const ic = pg === 'Data Calls' ? 'list' : pg === 'Ask Data' ? 'chat' : 'code';
+    const pg = a.page; const ic = pg === 'Data Calls' ? 'list' : pg === 'Ask Data' ? 'chat' : pg === 'Governance' ? 'shield' : 'code';
     return html`<button key=${a.label} className="action" onClick=${() => go(pg, a)}>
       <span className="a-ico"><${Icon} name=${ic} /></span><b>${a.label}<${Icon} name="arrow" size=${16} /></b><span>${a.desc}</span></button>`;
   })}</div>`;
@@ -556,18 +560,20 @@ function RunPanel({ call, onClose }) {
   <//>`;
 }
 
-function RequestModal({ onClose }) {
+function RequestModal({ onClose, cats = [], initialCat = '' }) {
   const [desc, setDesc] = useState('');
+  const [cat, setCat] = useState(initialCat || cats[0] || '');
   const [busy, setBusy] = useState(false);
   const [res, setRes] = useState(null);
   const submit = async e => {
     e.preventDefault(); setBusy(true);
-    setRes(await post('/api/data-calls/request', { description: desc.trim() }));
+    setRes(await post('/api/data-calls/request', { description: desc.trim(), category: cat || null }));
     setBusy(false);
   };
   return html`<${Drawer} modal title="Request a new data call" subtitle="Describe the data you need. We'll check the registry for a close match before sending it to IT." onClose=${onClose}>
     ${!res || res.error ? html`<form onSubmit=${submit} style=${{ display: 'grid', gap: 14 }}>
       ${res?.error && html`<${Alert} kind="error">${res.error}<//>`}
+      ${cats.length > 1 && html`<div className="field"><label>Registry</label><${Segmented} value=${cat} onChange=${setCat} options=${cats} /></div>`}
       <div className="field"><label>What do you need?</label>
         <textarea className="textarea" rows="5" value=${desc} onChange=${e => setDesc(e.target.value)} placeholder="e.g. Quarterly claim counts by state, split by open vs. closed status, for the last three years" autoFocus /></div>
       <button className="btn primary" disabled=${busy || desc.trim().length < 8}>${busy ? html`<${Spinner} />Checking registry…` : 'Submit request'}</button>
@@ -583,8 +589,8 @@ function RequestModal({ onClose }) {
 }
 
 function DataCallsPage({ opts = {} }) {
-  const [cats, setCats] = useState(['Compliance', 'Financial Reporting']);
-  const [cat, setCat] = useState('Compliance');
+  const [cats, setCats] = useState([]);
+  const [cat, setCat] = useState('');
   const [state, setState] = useState('All');
   const [search, setSearch] = useState('');
   const q = useDebounced(search);
@@ -594,8 +600,9 @@ function DataCallsPage({ opts = {} }) {
   const [asking, setAsking] = useState(opts.tab === 'request');
   const [mine, setMine] = useState(null);
 
-  useEffect(() => { api('/api/data-calls/categories').then(d => d.categories && setCats(d.categories)); }, []);
+  useEffect(() => { api('/api/data-calls/categories').then(d => { if (d.categories) { setCats(d.categories); setCat(d.categories[0]); } }); }, []);
   useEffect(() => {
+    if (!cat) return undefined;
     let live = true; setCalls(null);
     api(`/api/data-calls?category=${encodeURIComponent(cat)}&state=${state}&search=${encodeURIComponent(q)}`).then(d => live && setCalls(d));
     return () => { live = false; };
@@ -610,7 +617,8 @@ function DataCallsPage({ opts = {} }) {
     <//>
     <div className="toolbar">
       <${Segmented} value=${view} onChange=${setView} options=${[['registry', 'Registry'], ['mine', 'My requests']]} />
-      ${view === 'registry' && html`<${Segmented} value=${cat} onChange=${setCat} options=${cats} />`}
+      ${view === 'registry' && cats.length > 1 && html`<${Segmented} value=${cat} onChange=${setCat} options=${cats} />`}
+      ${view === 'registry' && cats.length === 1 && html`<span className="badge info plain">${cats[0]} registry</span>`}
     </div>
 
     ${view === 'registry' ? html`<div>
@@ -637,7 +645,7 @@ function DataCallsPage({ opts = {} }) {
     </div>`}
 
     ${run && html`<${RunPanel} call=${run} onClose=${() => setRun(null)} />`}
-    ${asking && html`<${RequestModal} onClose=${() => setAsking(false)} />`}
+    ${asking && html`<${RequestModal} onClose=${() => setAsking(false)} cats=${cats} initialCat=${cat} />`}
   </div>`;
 }
 
@@ -700,6 +708,76 @@ function AskDataPage({ opts = {} }) {
 }
 
 // ============================================================
+// Governance  --  Compliance Admin control tower
+// ============================================================
+const SC_DEF = {
+  passRate: { label: 'Test pass rate', icon: 'shield', color: '--accent', soft: '--accent-soft', suffix: '%', sub: () => 'of tested calls' },
+  coverage: { label: 'Test coverage', icon: 'check2', color: '--blue', soft: '--blue-soft', suffix: '%', sub: () => 'calls with a test result' },
+  failing: { label: 'Failing', icon: 'alert', color: '--red', soft: '--red-soft', sub: () => 'must be fixed or retired' },
+  untested: { label: 'Untested', icon: 'clock', color: '--amber', soft: '--amber-soft', sub: () => 'no test result yet' },
+};
+
+function GovernancePage({ go }) {
+  const toast = useToast();
+  const [d, setD] = useState(null);
+  const [busyId, setBusyId] = useState(null);
+  const load = () => { setD(null); api('/api/governance').then(setD); };
+  useEffect(load, []);
+
+  const signOff = async (c, state) => {
+    setBusyId(c.data_call_id);
+    const r = await post('/api/governance/set-state', { category: c.category, dataCallId: Number(c.data_call_id), state });
+    setBusyId(null);
+    if (r.success) { toast(`“${c.data_call_name}” marked ${state === 'TESTED_PASS' ? 'passing' : 'failing'}`); load(); } else toast(r.error || 'Update failed', 'error');
+  };
+
+  if (!d) return html`<div><${PageHead} title="Governance" subtitle="Loading registry health…" /><${Skeletons} n=${4} h=${118} /></div>`;
+  if (d.error) return html`<div><${PageHead} title="Governance" /><${Alert} kind="error">${d.error}<//></div>`;
+
+  const s = d.scorecard;
+  const maxDemand = Math.max(1, ...d.demand.map(x => x.requests));
+  return html`<div>
+    <${PageHead} title="Governance" subtitle=${`${d.registries.join(' & ')} registry control tower — what needs retesting, what is waiting on IT, and what people keep asking for.`}>
+      <button className="btn" onClick=${load}><${Icon} name="refresh" size=${15} />Refresh</button>
+    <//>
+    ${d.warnings?.length > 0 && html`<div style=${{ marginBottom: 16 }}><${Alert} kind="warn">Some figures are partial: ${d.warnings.join(' · ')}<//></div>`}
+    <div className="kpis">${Object.keys(SC_DEF).map(k => html`<${Kpi} key=${k} def=${SC_DEF[k]} value=${s[k]} />`)}</div>
+
+    <div className="grid-2">
+      <div className="card pad"><div className="card-title">Retest queue<small>${plural(d.attention.length, 'call')} need sign-off</small></div>
+        ${d.attention.length === 0 ? html`<${Empty} icon="check2" title="Everything is tested and passing" />` : html`<div className="list scroll-list">${d.attention.map(c => html`<div key=${c.category + c.data_call_id} className="list-item">
+          <div className="li-main"><b>${c.data_call_name}</b><span>${c.file_name}</span></div>
+          <${StatusBadge} status=${c.state} />
+          <div className="mini-actions">
+            <button className="btn sm" disabled=${busyId === c.data_call_id} title="Record a passing test" onClick=${() => signOff(c, 'TESTED_PASS')}><${Icon} name="check" size=${13} />Pass</button>
+            <button className="btn sm danger" disabled=${busyId === c.data_call_id} title="Record a failing test" onClick=${() => signOff(c, 'TESTED_FAIL')}><${Icon} name="x" size=${13} />Fail</button>
+          </div></div>`)}</div>`}
+      </div>
+
+      <div className="card pad"><div className="card-title">Review SLA<small>target ${d.slaDays} days · avg ${d.stats.avgReviewDays ?? '—'} d</small></div>
+        ${d.pending.length === 0 ? html`<${Empty} icon="check2" title="No requests waiting on IT" />` : html`<div className="list scroll-list">${d.pending.map(r => html`<div key=${r.id} className="list-item">
+          <div className="li-main"><b>${r.request_description}</b><span>${r.requested_by} · ${fmtDate(r.requested_at)}</span></div>
+          <span className=${'badge ' + (r.overdue ? 'bad' : 'warn')}>${r.ageDays == null ? '—' : `${Math.round(r.ageDays)} d`}${r.overdue ? ' overdue' : ''}</span></div>`)}</div>`}
+      </div>
+    </div>
+
+    <div className="grid-2">
+      <div className="card pad"><div className="card-title">Demand signals<small>existing calls people keep requesting</small></div>
+        ${d.demand.length === 0 ? html`<${Empty} icon="trend" title="No demand data yet">Requests that resemble an existing call will show up here, which is a hint it is hard to find or incomplete.<//>` : html`<div style=${{ display: 'grid', gap: 14 }}>${d.demand.map(x => html`<div key=${x.name}>
+          <div style=${{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginBottom: 6, gap: 10 }}><span>${x.name}</span><b>${plural(x.requests, 'request')}</b></div>
+          <div className="meter"><i style=${{ width: `${100 * x.requests / maxDemand}%` }} /></div></div>`)}</div>`}
+      </div>
+
+      <div className="card pad"><div className="card-title">Audit trail<small>latest IT decisions</small></div>
+        ${d.audit.length === 0 ? html`<${Empty} icon="inbox" title="No decisions yet" />` : html`<div className="list scroll-list">${d.audit.map(r => html`<div key=${r.id} className="list-item">
+          <div className="li-main"><b>${r.request_description}</b><span>${r.reviewed_by || '—'} · ${fmtDate(r.reviewed_at)}${r.turnaroundDays != null ? ` · ${r.turnaroundDays} d turnaround` : ''}</span></div>
+          <${StatusBadge} status=${r.status} /></div>`)}</div>`}
+      </div>
+    </div>
+  </div>`;
+}
+
+// ============================================================
 // IT Review
 // ============================================================
 function ReviewPanel({ req, onDone }) {
@@ -707,7 +785,7 @@ function ReviewPanel({ req, onDone }) {
   const pending = String(req.status).toLowerCase() === 'pending';
   const [busy, setBusy] = useState('');
   const [name, setName] = useState('');
-  const [cat, setCat] = useState('Compliance');
+  const [cat, setCat] = useState(req.category || 'Compliance');
   const [state, setState] = useState('TESTED_PASS');
   const [sql, setSql] = useState('');
   const [notes, setNotes] = useState('');
@@ -733,6 +811,7 @@ function ReviewPanel({ req, onDone }) {
       <p style=${{ fontSize: 15, lineHeight: 1.6, marginBottom: 16 }}>${req.request_description}</p>
       <div className="kv">
         <div><span>Requested by</span><b>${req.requested_by || '—'}</b></div>
+        <div><span>Registry</span><b>${req.category || 'Compliance'}</b></div>
         <div><span>Submitted</span><b>${fmtDate(req.requested_at)}</b></div>
         <div><span>Closest existing call</span><b>${req.matched_data_call ? `${req.matched_data_call} (${Math.round(Number(req.similarity_score) * 100)}%)` : 'None — looks new'}</b></div>
         ${!pending && html`<div><span>Reviewed by</span><b>${req.reviewed_by || '—'} · ${fmtDate(req.reviewed_at)}</b></div>`}
@@ -802,6 +881,7 @@ function ITReviewPage() {
 const NAV = [
   { page: 'Home', label: 'Home', icon: 'home' },
   { page: 'Data Calls', label: 'Data calls', icon: 'list' },
+  { page: 'Governance', label: 'Governance', icon: 'shield' },
   { page: 'Ask Data', label: 'Ask data', icon: 'chat' },
   { page: 'IT Review', label: 'IT review', icon: 'code' },
 ];
@@ -835,6 +915,7 @@ function Shell() {
   const key = `${page}-${view.n}`;
   const body = page === 'Home' ? html`<${HomePage} go=${go} />`
     : page === 'Data Calls' ? html`<${DataCallsPage} opts=${view.opts} />`
+    : page === 'Governance' ? html`<${GovernancePage} go=${go} />`
     : page === 'Ask Data' ? html`<${AskDataPage} opts=${view.opts} />`
     : html`<${ITReviewPage} />`;
 

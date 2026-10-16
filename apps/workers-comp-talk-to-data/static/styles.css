@@ -445,3 +445,8 @@ table.t tbody tr:hover td { background: var(--surface-2); }
 .thread .msg-bot { grid-template-columns: 30px 1fr; gap: 10px; }
 .thread .bot-av { width: 30px; height: 30px; border-radius: 9px; }
 .thread .bubble { padding: 14px; }
+
+/* ---- governance + registry scoping ---- */
+.scroll-list { max-height: 360px; overflow: auto; padding-right: 4px; }
+.mini-actions { display: flex; gap: 6px; }
+.access span.reg { background: var(--accent-soft); color: var(--accent-strong); }
