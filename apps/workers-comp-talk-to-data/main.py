@@ -150,6 +150,10 @@ class ExportRequest(BaseModel):
     includeSql: bool = False
 
 
+class CheckSqlRequest(BaseModel):
+    sql: str
+
+
 class SyncItem(BaseModel):
     category: str
     dataCallId: int
@@ -705,8 +709,22 @@ def generate_sql(req: GenerateSqlRequest, user: dict = Depends(needs("it_review"
     return _ensure_data(get_genie().ask(req.description, conversation_id=req.conversationId))
 
 
+@app.post("/api/it-review/check-sql")
+def check_sql(req: CheckSqlRequest, user: dict = Depends(needs("it_review"))):
+    """Tell a reviewer whether SQL is runnable as a data call and how a date range will apply."""
+    try:
+        _, mode, replaced = sql_assets.apply_period(req.sql, "2000-01-01", "2000-12-31")
+    except sql_assets.SqlAssetError as exc:
+        return {"ok": False, "error": str(exc)}
+    return {"ok": True, "dateMode": mode, "replaced": replaced}
+
+
 @app.post("/api/it-review/approve")
 def approve_request(req: ApproveRequest, user: dict = Depends(needs("it_review"))):
+    try:
+        sql_assets.check_read_only(req.sqlQuery)
+    except sql_assets.SqlAssetError as exc:
+        return {"success": False, "error": str(exc)}
     table = config.DATA_CALL_CATEGORIES.get(req.category)
     if not table:
         return {"success": False, "error": f"Unknown category: {req.category}"}

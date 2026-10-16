@@ -8,7 +8,10 @@ for a chosen period we:
      that filter into a real date range on the same column
   3. otherwise, if the file hard-codes two or more ISO date literals ('2020-01-01'),
      treat the earliest as the period start and the latest as the period end
-  4. otherwise run it exactly as written
+  4. otherwise, if the file is relative to today (CURRENT_DATE, CURRENT_TIMESTAMP, NOW()),
+     run it "as of" the period end: today is replaced by the end date, so a query for
+     "this quarter" returns the quarter that contains the end date
+  5. otherwise run it exactly as written
 
 The query is also checked to be a single read-only SELECT / WITH statement,
 because it is executed with the app's warehouse permissions.
@@ -33,6 +36,11 @@ _YEAR_FILTER = re.compile(
     r"YEAR\(\s*(?P<col>[\w.]+)\s*\)\s*(?:BETWEEN\s+\d{4}\s+AND\s+\d{4}|(?:>=|<=|<>|!=|>|<|=)\s*\d{4})",
     re.I,
 )
+
+
+# CURRENT_DATE, current_date(), CURDATE(), TODAY()  /  CURRENT_TIMESTAMP, NOW()
+_TODAY = re.compile(r"\b(?:current_date|curdate|today)\b(?:\s*\(\s*\))?", re.I)
+_NOW = re.compile(r"\b(?:current_timestamp|now)\b(?:\s*\(\s*\))?", re.I)
 
 
 class SqlAssetError(ValueError):
@@ -116,7 +124,7 @@ def check_read_only(sql: str) -> str:
 def apply_period(sql: str, from_date: str, to_date: str) -> tuple[str, str, int]:
     """Return (sql, mode, replacements).
 
-    mode is 'placeholders', 'year_filter', 'literals' or 'none'.
+    mode is 'placeholders', 'year_filter', 'literals', 'as_of' or 'none'.
     """
     start, end = parse_period(from_date, to_date)
     body = check_read_only(sql)
@@ -137,4 +145,8 @@ def apply_period(sql: str, from_date: str, to_date: str) -> tuple[str, str, int]
         replaced = sum(1 for m in _DATE_LITERAL.finditer(body) if m.group(2) in swap)
         body = _DATE_LITERAL.sub(lambda m: f"{m.group(1)}'{swap.get(m.group(2), m.group(2))}'", body)
         return body, "literals", replaced
+    as_of, n_today = _TODAY.subn(f"DATE'{end}'", body)
+    as_of, n_now = _NOW.subn(f"TIMESTAMP'{end} 23:59:59'", as_of)
+    if n_today + n_now:
+        return as_of, "as_of", n_today + n_now
     return body, "none", 0

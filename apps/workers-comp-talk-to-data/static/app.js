@@ -552,6 +552,7 @@ function DateNote({ res }) {
   const range = from && to ? `${fmtDate(from)} – ${fmtDate(to)}` : 'your range';
   if (res.dateMode === 'placeholders') return html`<${Alert} kind="ok">Ran for <b>${range}</b>. Date placeholders in the SQL file were filled in (${plural(res.replaced, 'place')}).<//>`;
   if (res.dateMode === 'year_filter') return html`<${Alert} kind="ok">Ran for <b>${range}</b>. The SQL file's year filter (like <code>YEAR(accident_date) &gt;= 2020</code>) was rewritten to that date range. Check the SQL tab.<//>`;
+  if (res.dateMode === 'as_of') return html`<${Alert} kind="info">This SQL is relative to today (<code>CURRENT_DATE</code>), so it ran <b>as of ${fmtDate(to)}</b>: for example, “this quarter” means the quarter containing that date. Your start date isn't used. Check the SQL tab.<//>`;
   if (res.dateMode === 'literals') return html`<${Alert} kind="info">This SQL file hard-codes its dates, so ${plural(res.replaced, 'date literal')} were replaced with <b>${range}</b> (earliest → from, latest → to). Check the SQL tab.<//>`;
   return html`<${Alert} kind="warn"><b>Your date range was not applied.</b> This SQL file has no date placeholder (like <code>:from_date</code> / <code>:to_date</code>), so it ran exactly as written.<//>`;
 }
@@ -810,6 +811,20 @@ function GovernancePage({ go }) {
 // ============================================================
 // IT Review
 // ============================================================
+function SqlCheck({ chk }) {
+  if (!chk) return null;
+  if (chk.error && chk.ok === undefined) return null;
+  if (!chk.ok) return html`<${Alert} kind="error">${chk.error}<//>`;
+  const m = {
+    placeholders: ['ok', 'Uses :from_date / :to_date, so the date range users pick will apply exactly.'],
+    year_filter: ['ok', 'Filters by YEAR(...). The date range users pick will be rewritten onto that column.'],
+    literals: ['info', 'Has fixed dates. The earliest and latest will be replaced by the date range users pick.'],
+    as_of: ['info', 'Relative to today (CURRENT_DATE). It will run as of the end date users pick; their start date is not used.'],
+    none: ['warn', 'No date filter found, so the date range users pick will be ignored. Tip: filter your main date column with :from_date and :to_date.'],
+  }[chk.dateMode];
+  return m ? html`<${Alert} kind=${m[0]}>${m[1]}<//>` : null;
+}
+
 function ReviewPanel({ req, onDone }) {
   const toast = useToast();
   const pending = String(req.status).toLowerCase() === 'pending';
@@ -820,6 +835,14 @@ function ReviewPanel({ req, onDone }) {
   const [sql, setSql] = useState('');
   const [notes, setNotes] = useState('');
   const g = useGenie('/api/it-review/generate-sql', r => { if (r.sql) setSql(r.sql); });
+  const sqlQ = useDebounced(sql, 500);
+  const [chk, setChk] = useState(null);
+  useEffect(() => {
+    if (!sqlQ.trim()) { setChk(null); return undefined; }
+    let live = true;
+    post('/api/it-review/check-sql', { sql: sqlQ }).then(r => live && setChk(r));
+    return () => { live = false; };
+  }, [sqlQ]);
 
   const generate = () => { g.reset(); g.send('Draft the SQL for this request', { description: req.request_description }, true); };
   const approve = async e => {
@@ -865,7 +888,8 @@ function ReviewPanel({ req, onDone }) {
           <div className="field"><label>Test status</label><select className="select" value=${state} onChange=${e => setState(e.target.value)}><option value="TESTED_PASS">Passing</option><option value="TESTED_FAIL">Failing</option><option value="NA">Untested</option></select></div>
         </div>
         <div className="field"><label>SQL</label><textarea className="textarea mono" rows="6" value=${sql} onChange=${e => setSql(e.target.value)} required placeholder="Generate with Genie, or paste your own" style=${{ fontSize: 12.5 }} /></div>
-        <button className="btn primary" disabled=${!!busy || !name.trim() || !sql.trim()}>${busy === 'approve' ? html`<${Spinner} />Registering…` : html`<${Icon} name="check" size=${16} />Approve`}</button>
+        <${SqlCheck} chk=${chk} />
+        <button className="btn primary" disabled=${!!busy || !name.trim() || !sql.trim() || chk?.ok === false}>${busy === 'approve' ? html`<${Spinner} />Registering…` : html`<${Icon} name="check" size=${16} />Approve`}</button>
       </form>
       <form className="card pad" onSubmit=${reject} style=${{ display: 'grid', gap: 14, alignContent: 'start' }}>
         <div className="card-title" style=${{ margin: 0 }}>Reject</div>
