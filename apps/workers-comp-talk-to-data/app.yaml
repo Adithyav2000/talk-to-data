@@ -7,3 +7,19 @@ command:
 env:
   - name: GENIE_SPACE_ID
     value: "01f1c8b8bc9e187595404d6a66c18dc6"
+  # SQL warehouse the app runs queries on (the service principal needs CAN USE on it)
+  - name: DATABRICKS_WAREHOUSE_ID
+    value: "8b3b789f3948f8a9"
+
+  # Optional settings (defaults in config.py):
+  # - name: REPORT_CACHE_TTL_HOURS
+  #   value: "24"
+  # - name: REVIEW_SLA_DAYS
+  #   value: "3"
+  # - name: DEMO_PASSWORD
+  #   value: "choose-something-better-than-admin"
+  #
+  # Secrets must not be written here. Add a secret as an app resource (Apps > Edit > Resources),
+  # then reference it by its resource key:
+  # - name: APP_SECRET
+  #   valueFrom: app-secret
