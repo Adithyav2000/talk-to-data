@@ -257,6 +257,13 @@ def needs(permission: str):
 # ======================================================================
 # Helpers
 # ======================================================================
+_SQL_GUIDANCE = (
+    "Write one read-only Databricks SQL SELECT. Quote date_trunc units as strings, e.g. "
+    "DATE_TRUNC('QUARTER', col), and use only columns that exist in the tables. "
+    "Filter dates with a plain range on the date column (col >= 'YYYY-MM-DD' AND col <= 'YYYY-MM-DD')."
+)
+
+
 def _ensure_data(res: dict) -> dict:
     """If Genie returned SQL but no tabular rows, execute SQL directly."""
     if res.get("columns") and res.get("rows"):
@@ -720,7 +727,26 @@ def get_it_requests(status: str = "All", user: dict = Depends(needs("it_review")
 
 @app.post("/api/it-review/generate-sql")
 def generate_sql(req: GenerateSqlRequest, user: dict = Depends(needs("it_review"))):
-    return _ensure_data(get_genie().ask(req.description, conversation_id=req.conversationId))
+    genie = get_genie()
+    prompt = req.description
+    if not req.conversationId:
+        prompt = (
+            f"{req.description}\n\n{_SQL_GUIDANCE}"
+        )
+    res = _ensure_data(genie.ask(prompt, conversation_id=req.conversationId))
+    # Genie sometimes drafts SQL that does not run (e.g. an unquoted QUARTER); feed the error back.
+    for _ in range(2):
+        sql = res.get("sql")
+        if not sql or res.get("columns") or not res.get("conversation_id"):
+            break
+        err = get_data_svc().execute_sql(sql).get("error")
+        if not err:
+            break
+        res = _ensure_data(genie.ask(
+            f"That SQL failed with: {err}\nRewrite it so it runs. {_SQL_GUIDANCE}",
+            conversation_id=res["conversation_id"],
+        ))
+    return res
 
 
 @app.post("/api/it-review/check-sql")
