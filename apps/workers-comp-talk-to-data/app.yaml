@@ -5,8 +5,10 @@ command:
   - --port=8000
 
 env:
+  # Personal access token, from the app's Secret resource (key: databricks-pat ->
+  # secret scope my-app-scope / key databricks-pat). The app queries as that user.
   - name: DATABRICKS_PAT
-    valueFrom: "my-app-scope.databricks-pat"
+    valueFrom: databricks-pat
   - name: DATABRICKS_HOST
     value: "https://adb-7405617190946816.16.azuredatabricks.net"
   - name: GENIE_SPACE_ID
