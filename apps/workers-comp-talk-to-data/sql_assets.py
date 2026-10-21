@@ -97,6 +97,16 @@ def _rewrite_year_filters(sql: str, start: str, end: str) -> tuple[str, int]:
     return _YEAR_FILTER.sub(repl, sql), count
 
 
+# DATE_TRUNC(QUARTER, col) -> DATE_TRUNC('QUARTER', col); the unit must be a string in Spark SQL
+_TRUNC_UNIT = re.compile(
+    r"(\bdate_trunc\s*\(\s*)(year|quarter|month|week|day|hour|minute|second)(\s*,)", re.I
+)
+
+
+def _quote_trunc_units(sql: str) -> str:
+    return _TRUNC_UNIT.sub(lambda m: f"{m.group(1)}'{m.group(2).upper()}'{m.group(3)}", sql)
+
+
 def parse_period(from_date: str, to_date: str) -> tuple[str, str]:
     try:
         start, end = date.fromisoformat(from_date), date.fromisoformat(to_date)
@@ -127,7 +137,7 @@ def apply_period(sql: str, from_date: str, to_date: str) -> tuple[str, str, int]
     mode is 'placeholders', 'year_filter', 'literals', 'as_of' or 'none'.
     """
     start, end = parse_period(from_date, to_date)
-    body = check_read_only(sql)
+    body = _quote_trunc_units(check_read_only(sql))
 
     body, n_from = _substitute(body, _placeholder_re(FROM_NAMES), start)
     body, n_to = _substitute(body, _placeholder_re(TO_NAMES), end)

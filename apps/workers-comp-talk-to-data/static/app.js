@@ -235,14 +235,16 @@ function analyze(columns, rows) {
     return { c, i, numeric: vals.length > 0 && vals.filter(isNum).length / vals.length >= 0.9, time: TIME_RE.test(c), id: ID_RE.test(c) };
   });
   const x = meta.find(m => !m.numeric) || meta.find(m => m.time) || meta[0];
-  let ys = meta.filter(m => m !== x && m.numeric && !m.id);
+  // year/date columns are labels, not measures: never plot them as a series
+  let ys = meta.filter(m => m !== x && m.numeric && !m.id && !m.time);
   if (!ys.length) ys = meta.filter(m => m !== x && m.numeric);
   return { x, ys: ys.slice(0, 4) };
 }
 
 function ChartView({ columns, rows }) {
   const { x, ys } = useMemo(() => analyze(columns, rows), [columns, rows]);
-  const data = useMemo(() => rows.slice(0, 60).map(r => {
+  // a time axis must show its whole range; category charts stay capped to stay legible
+  const data = useMemo(() => (x.time ? rows.slice(0, 500) : rows.slice(0, 60)).map(r => {
     const o = { [x.c]: r[x.i] == null ? '—' : String(r[x.i]) };
     ys.forEach(y => { o[y.c] = isNum(r[y.i]) ? Number(r[y.i]) : null; });
     return o;

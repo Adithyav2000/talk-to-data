@@ -166,31 +166,30 @@ PAGE_PERMISSIONS = {
 DATA_CALL_STATES = ["All", "TESTED_PASS", "TESTED_FAIL", "NA"]
 
 # ---------------------------------------------------------------------------
-# Enterprise Report prompts  (10 per category)
+# Enterprise Report prompts
+#
+# Each asks for one simple breakdown (one label column, one or two numbers) so
+# the answer is a small table and a chart that is easy to explain in a demo.
 # ---------------------------------------------------------------------------
 REPORT_PROMPTS = {
     "Finance Reports": [
-        "Claims Cost Summary: show total and average weekly wages by claim status and year",
-        "Carrier Liability Exposure: show the open claims count and total wage exposure per carrier",
-        "Claims Aging & Reserve Report: show the duration from claim assembly to closure for financial reserve tracking",
-        "High-Cost Claims Flagging: flag the top percentile of claims by average weekly wage multiplied by number of dependents",
-        "Year-over-Year Cost Trend: show annual claim volume and total wage liability over time",
-        "Dependent Liability Analysis: show financial exposure segmented by dependent count brackets",
-        "Carrier Type Cost Comparison: show average claim cost and claim volume for each carrier type",
-        "District-Level Financial Summary: show total wage exposure and claim counts per district",
-        "Claim Settlement Velocity: show the average days between key milestones (PPD scheduled, closed) alongside wage cost",
-        "Open Claims Financial Risk: rank all currently open claims by weekly wage and age at injury risk",
+        "Claims per Year: how many claims were filed in each accident year since 2010? One row per year, oldest first.",
+        "Open vs. Closed: how many claims are in each current claim status? One row per status, most claims first.",
+        "Average Weekly Wage per Year: what is the average weekly wage of injured workers in each accident year since 2010? One row per year.",
+        "Top 10 Carriers by Open Claims: which 10 carriers have the most open claims? Show carrier name and open claim count.",
+        "Wage by Carrier Type: what is the average weekly wage for each carrier type? One row per carrier type.",
+        "Open Claims by District: how many open claims does each district have? One row per district, most first.",
+        "Days to Close: on average, how many days does it take to close a claim, for each accident year since 2010? One row per year.",
+        "Claims by Dependents: how many claims have 0, 1, 2, 3, or 4 or more dependents? One row per group.",
     ],
     "Enterprise / Operational Reports": [
-        "Injury Classification Distribution: show claim counts by OIICS/WCIO codes and body part",
-        "Demographic Risk Profile: show injury frequency by gender, age group and district",
-        "Carrier Performance Scorecard: show average resolution time and open/closed ratio per carrier",
-        "District Claims Heatmap: show the geographic distribution of claims, injury types and severity by district",
-        "Claims Pipeline & Backlog: show the funnel across milestones - assembled, PPD scheduled, closed",
-        "Seasonal Accident Trend: show monthly and quarterly accident patterns across years",
-        "Age-at-Injury Analysis: show injury type and severity distribution across age bands",
-        "Cause-of-Injury Pareto Report: show the top 20% of injury causes driving 80% of claims",
-        "Claim Reopening Analysis: show claims with multiple milestone resets that indicate reopened cases",
-        "Carrier Market Share Report: show the proportion of total claims handled by each carrier over time",
+        "Claims by District: how many claims does each district have? One row per district, most first.",
+        "Top 10 Injured Body Parts: which 10 body parts are injured most often? Show body part and claim count.",
+        "Top 10 Causes of Injury: what are the 10 most common causes of injury? Show cause and claim count.",
+        "Claims by Gender: how many claims are there for each gender? One row per gender.",
+        "Claims by Age Group: how many claims are there per age-at-injury group (under 25, 25-34, 35-44, 45-54, 55-64, 65+)?",
+        "Accidents by Month: across all years, how many accidents happen in each calendar month? One row per month, January to December.",
+        "Top 10 Carriers by Claims: which 10 carriers handle the most claims? Show carrier name and claim count.",
+        "Claims Closed per Year: how many claims were closed in each year since 2010? One row per year, oldest first.",
     ],
 }
